@@ -1,0 +1,21 @@
+{
+  "name": "orbital-ballistix",
+  "version": "1.0.0",
+  "description": "A high-fidelity WebGL arena game inspired by Ballistix from Crash Bash",
+  "license": "ISC",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --host",
+    "models:sync": "node tools/sync-models.mjs"
+  },
+  "dependencies": {
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "playwright": "^1.62.1",
+    "terser": "^5.50.0",
+    "vite": "^8.2.1"
+  }
+}
