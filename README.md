@@ -41,15 +41,47 @@ different things:
   cross your goal in one motion, which is the thing the game is actually about.
   A mouse gets an exact 1:1 mapping — the paddle sits under the cursor — and
   hover-steers with no button held. Let go and the paddle stays put.
-- **Directional** (keyboard, stick) — these say "go left", not "be here". Hold a
-  direction to move; release and the craft springs back to the middle of its
-  wall like a self-centring stick. The return is exponential and capped to the
-  craft's own top speed, so it leaves the edge fast and eases into the centre.
-  Tune or disable it with `PADDLE.recenterRate` in `core/config.js` (0 = hold
-  position instead).
+- **Directional** (keyboard, stick) — these say "go left", not "be here". A
+  press moves at full speed (34 units/sec) from the *first frame*: no start-up
+  delay, no acceleration curve, no discrete step. Release and the craft heads
+  back to the middle of its wall, also starting on the next frame.
+
+  Both families **hold position on release**. Where you parked the paddle is
+  information you chose to put there; pulling it back to centre would mean
+  re-aiming after every single press. Tapping is therefore pure placement — one
+  tap walks the craft about 1.4 units (22% of the half-wall), and taps chain
+  evenly in either direction.
+
+  A press is honoured for a minimum of 45ms even if the key is released before
+  the next frame, so a flick between two frames can't be silently dropped. That
+  minimum also sets the smallest deliberate step.
+
+  Self-centring is still available behind `PADDLE.returnMax` (set it above 0),
+  and when enabled it starts on the frame you release and ramps from
+  `returnSpeed` to `returnMax` over `returnRamp`. Off by default.
+
+  Tune in `PADDLE` (`core/config.js`): `moveSpeed`, `minPress`, plus `track`
+  and `damp` for how tightly the hull follows.
+
+  > An earlier version gave taps their own discrete step and put a 140ms delay
+  > before continuous travel began. It looked reasonable on paper and felt
+  > terrible: press, jump, stall, go. Three events where the player asked for
+  > one. `tools/controls.mjs` now slices the first 400ms of a hold into 60ms
+  > windows and fails if any of them shows no motion.
+  >
+  > Both that suite and `moments.mjs` measure in *simulation* time, not wall
+  > time — scoring a goal triggers hit-stop, and a slow-motion freeze is
+  > indistinguishable from an input stall if you only watch position against
+  > the clock.
 
 Whichever device you last actually used owns the paddle, so releasing an arrow
 key can't be hijacked by an idle cursor. Move the mouse and it takes over again.
+
+Screen-to-paddle mapping is projected against the camera at its *solved*
+framing, not the live one. The live camera leans toward the action and shakes
+on impact; mapping through it makes the paddle creep under a motionless cursor,
+which is the difference between a control that feels precise and one that
+feels haunted.
 
 ---
 
@@ -109,6 +141,17 @@ grading, vignette and grain in a single pass.
 load; that cube becomes both the scene background and the PMREM source for
 image-based lighting. Runtime cost is one cube fetch per background pixel. Stars
 and the gas giant are real geometry, because they'd smear at cube resolution.
+
+**The camera framing is a constrained solve, not a bounding box.** Fitting the
+whole arena on screen leaves it a small tile in a sea of scenery. Like the
+original, we push in until it overflows — but only where overflow is free.
+Three constraint sets are checked against different screen edges: the *far*
+ends of the side walls plus the player's own paddle travel against the left and
+right; the far wall against the top; the player's goal line and craft against
+the bottom. The near ends of the side walls are deliberately left unconstrained,
+which is what lets the bottom corners run off the edges. Distance and aim are
+solved together, because balancing the vertical headroom first is what frees the
+solve to keep pushing in until the width binds. See `_solveDistance`.
 
 **The shadow map is rendered once, at load.** The arena and the key light never
 move. Anything that *does* move is kept out of it — craft use a hover glow for
@@ -170,7 +213,8 @@ node tools/shot.mjs      <url> <outDir>      # menu/play/result at 4 viewports
 node tools/closeup.mjs   <url> <outDir> <z>  # zoomed craft & orb detail
 node tools/moments.mjs   <url> <outDir>      # concede, elimination, surge, low-health
 node tools/playtest.mjs  <url>               # drives a full match, asserts it resolves
-node tools/controls.mjs  <url>               # steering direction, range, device hand-off
+node tools/controls.mjs  <url>               # steering: direction, range, tap/hold, hand-off
+node tools/framing.mjs   <url>               # where the arena lands in NDC, per viewport
 node tools/balance.mjs   <url> <n> <diff>    # seat-symmetry check
 npm run models:sync                          # re-extract public/models from the zips
 ```

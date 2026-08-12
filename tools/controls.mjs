@@ -6,13 +6,14 @@
  *      pointer and the keyboard. The wall offset `u` runs along the craft's
  *      tangent, which for the south wall points at -X, so any mapping built
  *      from world X is inverted.
- *   2. Device hand-off — releasing a steering key must return the craft to the
- *      centre of its wall, not snap it back to wherever a long-idle mouse
- *      cursor happens to be sitting.
+ *   2. Device hand-off — releasing a steering key must leave the craft where it
+ *      is, not snap it back to wherever a long-idle mouse cursor happens to be
+ *      sitting.
  *   3. Range — the far edges of the mapping must actually reach the wall's
  *      limits.
- *   4. Scheme separation — directional controls (keys, stick) self-centre on
- *      release; positional ones (mouse, finger) hold where they put you.
+ *   4. No stall — a held key must produce continuous motion from the first
+ *      frame. A discrete step followed by a start-up delay reads as the
+ *      control snagging, and shipped that way once.
  *
  *   node tools/controls.mjs [url]
  */
@@ -40,6 +41,107 @@ const screenX = () => page.evaluate(() => {
   return Math.round((v.x * 0.5 + 0.5) * window.innerWidth);
 });
 const u = () => page.evaluate(() => +window.__ballistix.game.crafts[0].u.toFixed(2));
+
+
+/**
+ * Sample the craft's offset every frame, in-page, for `ms`.
+ *
+ * Reading a value per assertion over CDP costs 50-100ms a hop under a software
+ * renderer, which is the same order as the timings being measured — the shape
+ * of a 400ms animation simply cannot be resolved that way. One evaluate that
+ * records at requestAnimationFrame gives honest timestamps.
+ */
+const record = (ms) => page.evaluate((dur) => new Promise((done) => {
+  const out = [];
+  const t0 = performance.now();
+  const tick = () => {
+    const t = performance.now() - t0;
+    out.push([Math.round(t), +window.__ballistix.game.crafts[0].u.toFixed(3)]);
+    if (t < dur) requestAnimationFrame(tick); else done(out);
+  };
+  requestAnimationFrame(tick);
+}), ms);
+
+/** Value of the series at (or just after) `t` ms. */
+const at = (series, t) => (series.find((s) => s[0] >= t) || series[series.length - 1])[1];
+
+
+/**
+ * Fire `count` taps of `code` at a true `interval`, from inside the page.
+ *
+ * Driving taps over CDP adds 60-120ms of unpredictable latency per press,
+ * which is the same order as the tap cadence being tested — the harness ends
+ * up measuring Playwright's round-trip rather than the game's feel. Dispatching
+ * from in-page makes the cadence exactly what it claims to be.
+ */
+const tapLoop = (code, count, interval) => page.evaluate(async (o) => {
+  const fire = (type) => window.dispatchEvent(new KeyboardEvent(type, { code: o.code, bubbles: true }));
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const series = [];
+  for (let i = 0; i < o.count; i++) {
+    fire('keydown');
+    await wait(40);
+    fire('keyup');
+    await wait(o.interval - 40);
+    const a = window.__ballistix;
+    // Carry the time scale so the caller can discard steps that landed during
+    // hit-stop, where a wall-clock interval buys far less simulation time.
+    series.push([+a.game.crafts[0].u.toFixed(3), +a.game.timeScale.toFixed(3)]);
+  }
+  return series;
+}, { code, count, interval });
+
+/**
+ * Hold `code` for `ms`, recording the craft's offset each frame.
+ *
+ * Also records `timeScale`. Scoring a goal triggers hit-stop and slow motion,
+ * which freezes the craft for a beat — indistinguishable from an input stall
+ * if you only look at position against wall-clock time. Sampling the scale
+ * lets the caller measure displacement in *simulation* time, which is the
+ * frame of reference a control's responsiveness actually lives in.
+ */
+const holdAndRecord = (code, ms) => page.evaluate(async (o) => {
+  const fire = (type) => window.dispatchEvent(new KeyboardEvent(type, { code: o.code, bubbles: true }));
+  const out = [];
+  const t0 = performance.now();
+  fire('keydown');
+  await new Promise((done) => {
+    const tick = () => {
+      const a = window.__ballistix;
+      const t = performance.now() - t0;
+      out.push([Math.round(t), +a.game.crafts[0].u.toFixed(3), +a.game.timeScale.toFixed(3)]);
+      if (t < o.ms) requestAnimationFrame(tick); else done();
+    };
+    requestAnimationFrame(tick);
+  });
+  fire('keyup');
+  return out;
+}, { code, ms });
+
+
+/**
+ * Keep the match running for the length of the suite.
+ *
+ * A match resolves in about 100 seconds and this file now takes longer than
+ * that. Once someone wins, `_steerPlayer` stops being called and every
+ * remaining assertion fails against a frozen craft — which looks exactly like
+ * a controls bug and is not one. Topping the scores up keeps everyone alive;
+ * if a match did already finish, start a fresh one and wait out its intro.
+ */
+const keepAlive = async () => {
+  const restarted = await page.evaluate(() => {
+    const a = window.__ballistix, g = a.game;
+    if (g.state === 'over' || !g.alive[0]) {
+      a.inMatch = true;
+      document.getElementById('result').classList.add('hidden');
+      g.startMatch(a.difficulty);
+      return true;
+    }
+    for (let i = 0; i < 4; i++) { g.scores[i] = 5; g.alive[i] = true; g.hud.setScore(i, 5); }
+    return false;
+  });
+  if (restarted) await page.waitForTimeout(4200);   // intro sweep
+};
 
 const results = [];
 const check = (name, ok, detail) => {
@@ -75,26 +177,37 @@ check('pointer reaches both wall limits',
 const sign = () => page.evaluate(() => window.__ballistix.game._mapper.sign);
 const screenU = async () => (await u()) * (await sign());
 
-/** Centre the craft with the mouse, then hand control to the keyboard. */
+/**
+ * Park the craft mid-wall with the mouse, ready to hand control to the keyboard.
+ *
+ * Two moves, not one. Hover-steer only reclaims control on a *real* pointer
+ * movement, so if the cursor already sits at centre from a previous call, a
+ * single move to the same coordinates changes nothing and the craft stays
+ * wherever the keyboard left it — which used to be masked by the craft
+ * self-centring on its own.
+ */
 const recentre = async () => {
+  await keepAlive();
+  await page.mouse.move(W * 0.5 + 70, H * 0.75);
+  await page.waitForTimeout(140);
   await page.mouse.move(W * 0.5, H * 0.75);
-  await page.waitForTimeout(1200);
+  await page.waitForTimeout(900);
 };
 
 await recentre();
 const centreU = await screenU();
 await page.keyboard.down('ArrowRight');
 await page.waitForTimeout(650);
-const heldRight = await screenU();     // sampled while held: it springs back on release
+const heldRight = await screenU();     // sampled while held
 await page.keyboard.up('ArrowRight');
 check('key Right moves craft right', heldRight > centreU + 1.5,
   `screen-u ${centreU.toFixed(2)} → ${heldRight.toFixed(2)} while held`);
 
-// --- 4. release returns to CENTRE, not to the parked cursor -----------------
-// Park the cursor hard over to one side first, so "centre" and "wherever the
-// mouse is" are far apart and the assertion can tell them apart. Then steer
-// with the keyboard and let go: the craft must spring to the middle of its
-// wall, not get hijacked back to the idle cursor.
+await keepAlive();
+// --- 4. release holds position; an idle cursor can't steal it --------------
+// Park the cursor hard over to one side first, so "where the keyboard left the
+// craft" and "wherever the mouse is" are far apart and the assertion can tell
+// them apart. Then steer with the keyboard and let go.
 // Asserted on `u`, not screen x — the camera leans toward the action, so even
 // a stationary craft drifts tens of pixels on screen.
 await page.mouse.move(W * 0.15, H * 0.75);
@@ -103,11 +216,13 @@ const cursorU = await u();
 await page.keyboard.down('ArrowRight');
 await page.waitForTimeout(400);
 await page.keyboard.up('ArrowRight');
+await page.waitForTimeout(400);
+const settleU = await u();
 await page.waitForTimeout(1600);
 const heldU1 = await u();
-check('key release returns to centre, not to the idle cursor',
-  Math.abs(heldU1) < 0.4 && Math.abs(heldU1 - cursorU) > 2,
-  `u → ${heldU1} after release (cursor is parked at u=${cursorU})`);
+check('key release holds position, not hijacked by the idle cursor',
+  Math.abs(heldU1 - settleU) < 0.6 && Math.abs(heldU1 - cursorU) > 2,
+  `u ${settleU} → ${heldU1} over 1.6s (cursor is parked at u=${cursorU})`);
 
 // --- 5. moving the mouse again takes control back ---------------------------
 await page.mouse.move(W * 0.2, H * 0.75);
@@ -128,42 +243,132 @@ await page.keyboard.up('ArrowLeft');
 check('key Left moves craft left', heldLeft < beforeLeft - 1.5,
   `screen-u ${beforeLeft.toFixed(2)} → ${heldLeft.toFixed(2)} while held`);
 
-// --- 7. keys recentre on release --------------------------------------------
+// --- 7. the craft stays put after a release --------------------------------
+// Self-centring is off by design: where the player parked the paddle is a
+// decision, and undoing it would mean re-aiming after every press.
 await recentre();
 await page.keyboard.down('ArrowRight');
-await page.waitForTimeout(700);
+await page.waitForTimeout(400);
 await page.keyboard.up('ArrowRight');
-const atEdge = await screenU();
-await page.waitForTimeout(1600);
-const returned = await screenU();
-check('key release springs back to centre',
-  Math.abs(atEdge) > 3 && Math.abs(returned) < 0.4,
-  `screen-u ${atEdge.toFixed(2)} → ${returned.toFixed(2)}`);
+await page.waitForTimeout(400);            // let the hull settle
+const parkedAt = await screenU();
+await page.waitForTimeout(2000);
+const stillAt = await screenU();
+check('release leaves the craft where it was',
+  Math.abs(parkedAt) > 2 && Math.abs(stillAt - parkedAt) < 0.15,
+  `screen-u ${parkedAt.toFixed(2)} → ${stillAt.toFixed(2)} after 2s idle`);
 
-// --- 8. the return must not be instant --------------------------------------
-// A teleport to centre reads as a bug, not a spring. Sample mid-flight.
+await keepAlive();
+// --- 8. a release stops the craft promptly ---------------------------------
+// Holding leaves the hull with real velocity; letting go must bleed it off
+// quickly rather than coasting on, then hold.
+await recentre();
 await page.keyboard.down('ArrowLeft');
-await page.waitForTimeout(700);
+await page.waitForTimeout(400);
 await page.keyboard.up('ArrowLeft');
-const start = await screenU();
-await page.waitForTimeout(140);
-const mid = await screenU();
-check('return is animated, not instant',
-  Math.abs(mid) < Math.abs(start) - 0.2 && Math.abs(mid) > 0.3,
-  `screen-u ${start.toFixed(2)} → ${mid.toFixed(2)} after 140ms`);
-await page.waitForTimeout(1400);
+const coast = await record(1000);
+const cm = (t) => Math.abs(at(coast, t));
+check('release stops the craft, with only a little coast',
+  cm(300) - cm(0) < 1.2 && Math.abs(cm(900) - cm(400)) < 0.15,
+  `travelled ${(cm(300) - cm(0)).toFixed(2)} more after release, then held steady`);
 
-// --- 9. hover-steer is positional and must NOT recentre ---------------------
+await keepAlive();
+// --- 9. hover-steer keeps tracking a held cursor ---------------------------
 await page.mouse.move(W * 0.8, H * 0.75);
 await page.waitForTimeout(1200);
 const parked0 = await u();
 await page.waitForTimeout(1600);
 const parked1 = await u();
-check('mouse hover holds position (no recentre)',
-  Math.abs(parked0) > 2 && Math.abs(parked1 - parked0) < 0.2,
-  `u ${parked0} → ${parked1} with cursor held off-centre`);
+check('mouse hover holds position exactly',
+  Math.abs(parked0) > 2 && Math.abs(parked1 - parked0) < 0.05,
+  `u ${parked0} → ${parked1} over 1.6s with the cursor untouched`);
 
-// --- 10-12. touch, in a phone-shaped context -------------------------------
+// --- 10. a press moves without stalling ------------------------------------
+// The regression this exists for: a press used to fire a discrete step, then
+// sit still through a start-up delay, then accelerate. Three events where the
+// player asked for one, and it reads as the control snagging. Slice the first
+// 400ms of a hold into 60ms windows — every one of them must show real motion.
+await recentre();
+const sgn = await sign();
+const startCurve = await holdAndRecord('ArrowRight', 500);
+const posAt = (t) => (startCurve.find((p) => p[0] >= t) || startCurve[startCurve.length - 1])[1] * sgn;
+// Windows are skipped once the craft reaches its stop (a zero there is correct,
+// not a stall) and while the game is in slow motion (that freeze is the hit-stop
+// effect, not the control hesitating).
+const limitU = await page.evaluate(() => window.__ballistix.game.crafts[0].limit);
+const scaleAt = (t) => (startCurve.find((p) => p[0] >= t) || startCurve[startCurve.length - 1])[2];
+const windows = [];
+for (let t = 0; t < 360; t += 60) {
+  if (posAt(t) > limitU - 0.6) break;
+  const scale = Math.min(scaleAt(t), scaleAt(t + 60));
+  if (scale < 0.9) continue;
+  windows.push(+(posAt(t + 60) - posAt(t)).toFixed(2));
+}
+check('a held key moves continuously, with no stall',
+  windows.length >= 2 && windows.every((d) => d > 0.35),
+  `per-60ms displacement at full sim speed: [${windows.join(', ')}]`);
+
+// --- 10b. a very short tap still registers ---------------------------------
+// Shorter than a frame at 60Hz. Without the press latch the simulation never
+// sees the key down at all and the input is silently dropped.
+await recentre();
+const before = await screenU();
+await page.evaluate(() => {
+  const fire = (t) => window.dispatchEvent(new KeyboardEvent(t, { code: 'ArrowRight', bubbles: true }));
+  fire('keydown'); fire('keyup');           // same tick: down and up together
+});
+const flick = await record(400);
+const flickPeak = Math.max(...flick.map(([, v]) => v * sgn));
+check('a sub-frame tap is not dropped', flickPeak > before + 0.8,
+  `peaked ${flickPeak.toFixed(2)} from ${before.toFixed(2)}`);
+
+// --- 11. taps accumulate in even, small steps -------------------------------
+// With nothing pulling the craft back, tapping is pure placement: each press
+// must add ground, and the steps must be even enough to aim with.
+await recentre();
+const climbRaw = await tapLoop('ArrowRight', 8, 330);
+const climb = climbRaw.map(([v]) => v * sgn);
+const steps = [];
+for (let i = 1; i < climb.length; i++) {
+  if (climb[i - 1] > limitU - 0.8) break;          // pinned against the wall
+  if (climbRaw[i][1] < 0.98) continue;             // hit-stop ate this interval
+  steps.push(+(climb[i] - climb[i - 1]).toFixed(2));
+}
+const stepMax = Math.max(...steps);
+check('taps accumulate in even steps',
+  steps.length >= 3 && Math.min(...steps) > 0.5 && stepMax < 2.6,
+  `per-tap steps at full sim speed: [${steps.join(', ')}]`);
+
+check('a tap is a small step, not a lunge',
+  stepMax < limit * 0.30,
+  `largest step ${stepMax.toFixed(2)} on a ±${limit.toFixed(1)} wall `
+  + `(${Math.round(stepMax / limit * 100)}% of half-width)`);
+
+// Cadence must not change the outcome now that nothing claws back — a slow
+// sequence of taps has to land in the same place as a fast one.
+await recentre();
+const slow = (await tapLoop('ArrowRight', 8, 700)).map(([v]) => v * sgn);
+check('cadence does not change where taps take you',
+  Math.abs(slow[slow.length - 1] - climb[climb.length - 1]) < 1.2,
+  `fast ${climb[climb.length - 1].toFixed(2)} vs slow ${slow[slow.length - 1].toFixed(2)}`);
+
+// --- 12. opposite taps walk it back ----------------------------------------
+const beforeBack = await screenU();
+const back = (await tapLoop('ArrowLeft', 6, 330)).map(([v]) => v * sgn);
+check('opposite taps walk the craft back',
+  back[back.length - 1] < beforeBack - 2,
+  `screen-u ${beforeBack.toFixed(2)} → ${back[back.length - 1].toFixed(2)} over 6 left taps`);
+
+// --- 13. holding crosses the wall quickly ----------------------------------
+await recentre();
+const holdCurve = await holdAndRecord('ArrowRight', 1600);
+const reached = holdCurve.find(([, v]) => v * sgn > 7.0);
+check('holding crosses to the wall quickly',
+  !!reached, reached ? `reached the stop in ${reached[0]}ms`
+    : `never reached it (best ${Math.max(...holdCurve.map(([, v]) => v * sgn)).toFixed(2)})`);
+
+await keepAlive();
+// --- 14-16. touch, in a phone-shaped context -------------------------------
 // Playwright's touchscreen API only taps, so the drag is driven with synthetic
 // PointerEvents. That exercises the handlers rather than the browser's gesture
 // recogniser, which is where the logic we care about actually lives.

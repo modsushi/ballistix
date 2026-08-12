@@ -242,9 +242,12 @@ export class Craft {
       // Motion: acceleration toward the target with heavy damping. A spring
       // would overshoot, which feels wrong for something you're aiming.
       const err = this.targetU - this.u;
-      const desired = clamp(err * 9.0, -PADDLE.maxSpeed, PADDLE.maxSpeed);
+      const desired = clamp(err * PADDLE.track, -PADDLE.maxSpeed, PADDLE.maxSpeed);
       const prevV = this.vu;
-      this.vu += clamp(desired - this.vu, -PADDLE.accel * dt, PADDLE.accel * dt);
+      // Single first-order filter. There used to be an acceleration clamp on
+      // top of this; two smoothing stages in series just meant ~90ms before
+      // the craft was up to speed, which the player feels as the control being
+      // slow off the mark.
       this.vu = damp(this.vu, desired, PADDLE.damp, dt);
       this.u = clamp(this.u + this.vu * dt, -this.limit, this.limit);
       if (Math.abs(this.u) >= this.limit - 1e-4) this.vu *= 0.35;

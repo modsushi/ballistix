@@ -49,15 +49,45 @@ export const PADDLE = {
   halfThick: 0.46,
   standoff: 2.45,     // distance from the goal wall plane
   maxSpeed: 40,       // units/sec at full tilt
-  accel: 320,
-  damp: 13,
+  // How hard the hull tracks its target, and how quickly its velocity may
+  // change. Both are tight: a directional press has to read as motion on the
+  // very next frame, and any softness here is felt as input lag.
+  damp: 26,
+  track: 34,          // proportional gain, target -> desired velocity
+
+  // --- directional (key / stick) feel ------------------------------------
+  // Held input moves at a flat `moveSpeed` from the first frame. No start-up
+  // delay and no ramp: both were tried and both read as a stutter, because a
+  // discrete step followed by a pause followed by acceleration is three
+  // separate events where the player asked for one.
+  moveSpeed: 28,      // units/sec while a direction is held
   /**
-    * How fast the deflector springs back to the middle of its wall once a
-    * relative control (key / stick) is released, in 1/sec. Exponential, so
-    * it leaves the edge quickly and eases into the centre. 0 disables the
-    * return and the craft simply holds where you left it.
+    * Minimum time a press is honoured for, even if the key is released before
+    * the next frame. A 30ms tap between two frames would otherwise vanish
+    * entirely — the DOM sees keydown and keyup, the simulation sees neither.
+    * This also sets the granularity of a tap: `minPress × moveSpeed` ≈ 1.3
+    * units, the smallest deliberate step a player can make. A typical 70ms
+    * tap covers about 2.
     */
-  recenterRate: 7,
+  minPress: 0.045,
+
+  /**
+    * Optional self-centring, **off by default**.
+    *
+    * With `returnMax: 0` the craft simply stays where you left it, which is
+    * what a paddle should do — where you parked it is information you chose to
+    * put there, and taking it away means re-aiming after every single press.
+    *
+    * Set `returnMax` above zero to turn it back on: the return then starts on
+    * the frame you release (no hold-off, which reads as lag) at `returnSpeed`,
+    * ramping quadratically to `returnMax` over `returnRamp` seconds — gentle
+    * at first so a brief release barely costs you, quick later so letting go
+    * properly gets you home fast.
+    */
+  returnMax: 0,       // units/sec once fully ramped; 0 = hold position
+  returnSpeed: 3.5,   // units/sec the instant you release
+  returnRamp: 0.45,   // seconds of no input to reach returnMax
+
   bankMax: 0.62,      // radians of roll when strafing
   hover: 0.16,        // bob amplitude
 };

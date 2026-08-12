@@ -19,26 +19,50 @@ import { clamp, damp, lerp, noise1, smoothstep } from '../core/math.js';
  */
 
 /**
- * The silhouette we must keep on screen: the eight deck corners at deck level
- * and again at the top of the containment wall, pushed out by the wall's
- * thickness. Sixteen points is enough to bound the arena exactly.
+ * Framing constraints.
+ *
+ * Fitting the entire arena inside the frame is the obvious thing to do and it
+ * looks wrong — the deck ends up a small tile floating in a sea of scenery.
+ * The original Ballistix instead pushes in until the arena overflows, letting
+ * the near left and right corners run off the edges, because those corners are
+ * the least useful pixels on the screen.
+ *
+ * So rather than one bounding set, we keep three, and only constrain each
+ * against the edge that actually matters for it:
+ *
+ *   WIDTH   the *far* ends of the side walls, plus the player's own travel.
+ *           The near ends share the same |x| but project wider, so leaving
+ *           them out is exactly what lets the bottom corners spill off-screen.
+ *   TOP     the far wall at full height — the deepest thing you must be able
+ *           to read.
+ *   BOTTOM  the player's goal line and their craft. Non-negotiable: an orb
+ *           arriving at a goal you cannot see is not a game.
  */
-const FIT_POINTS = (() => {
-  const { half, chamfer, wallH } = ARENA;
+const FIT = (() => {
+  const { half, chamfer, wallH, playY } = ARENA;
   const a = half - chamfer;
-  const pad = 1.9;                       // wall thickness plus a little rail
-  const ring = [
-    [-a, half], [a, half], [half, a], [half, -a],
-    [a, -half], [-a, -half], [-half, -a], [-half, a],
-  ];
-  const pts = [];
-  for (const [x, z] of ring) {
-    const l = Math.hypot(x, z);
-    const ex = x + (x / l) * pad, ez = z + (z / l) * pad;
-    pts.push(new THREE.Vector3(ex, 0, ez));
-    pts.push(new THREE.Vector3(ex, wallH + 0.5, ez));
-  }
-  return pts;
+  const V = (x, y, z) => new THREE.Vector3(x, y, z);
+
+  // Mirrors Craft's own clamp, so the framing tracks the paddle's real travel.
+  const reach = a - PADDLE.halfLen * 0.42;
+  const zPad = half - PADDLE.standoff;
+
+  return {
+    width: [
+      V(-half, 0, -a), V(half, 0, -a),         // far ends of the side walls
+      V(-a, 0, -half), V(a, 0, -half),         // far chamfer corners
+      V(-reach - PADDLE.halfLen, playY, zPad), // the player's deflector, fully
+      V(reach + PADDLE.halfLen, playY, zPad),  // extended to either stop
+    ],
+    top: [
+      V(-a, 2.5, -half), V(a, 2.5, -half),
+      V(-half, 2.5, -a), V(half, 2.5, -a),
+    ],
+    bottom: [
+      V(-a, 0, half), V(0, 0, half), V(a, 0, half),   // the player's goal line
+      V(-reach, playY + 1.5, zPad), V(reach, playY + 1.5, zPad),
+    ],
+  };
 })();
 
 export class GameCamera {
@@ -57,6 +81,7 @@ export class GameCamera {
     this.kickX = 0; this.kickY = 0;
     this._base = new THREE.Vector3();
     this._look = new THREE.Vector3();
+    this.stableCam = new THREE.PerspectiveCamera(50, aspect, 0.5, 1400);
     this.resize(aspect);
   }
 
@@ -69,15 +94,13 @@ export class GameCamera {
     this.portraitness = smoothstep(p);
 
     // Elevation: shallow and cinematic when wide, near-overhead when tall.
-    this.elevation = lerp(40, 66, this.portraitness) * Math.PI / 180;
+    this.elevation = lerp(35, 66, this.portraitness) * Math.PI / 180;
     // A slightly wider lens in portrait keeps the required distance sane.
     this.baseFov = lerp(48, 62, this.portraitness);
     this.cam.fov = this.baseFov;
 
-    // Push the arena up the frame so the bottom HUD and the player's own craft
-    // aren't fighting for the same pixels.
-    this.lookLift = lerp(-1.2, -3.4, this.portraitness);
-
+    // `lookLift` is solved, not authored — see `_solveDistance`.
+    this.lookLift = 0;
     this._solveDistance();
     this.cam.updateProjectionMatrix();
   }
@@ -86,43 +109,81 @@ export class GameCamera {
     const vFov = this.baseFov * Math.PI / 180;
     const hFov = 2 * Math.atan(Math.tan(vFov / 2) * this.aspect);
 
-    // Fill targets leave room for the HUD, which eats proportionally more of a
-    // short landscape viewport than a tall portrait one. In portrait the fit is
-    // always width-bound — a flat octagon seen at any elevation is wider than
-    // it is tall on screen — so we spend nearly the full width there and let
-    // the vertical slack carry the surrounding facility.
-    const fillX = lerp(0.94, 0.99, this.portraitness);
-    const fillY = lerp(0.86, 0.80, this.portraitness);
+    // How far each constrained set may reach, in NDC. Slightly over 1 on width
+    // is deliberate: it lets the widest part of the deck kiss the screen edges
+    // rather than sitting politely inside them.
+    const fillX = lerp(1.0, 0.995, this.portraitness);
+    const fillTop = lerp(0.95, 0.94, this.portraitness);
+    // The bottom stops short of the edge because the self pod and pause button
+    // live down there, and because the player's craft wants a little air.
+    const fillBottom = lerp(0.88, 0.90, this.portraitness);
 
-    // Start from a bounding-sphere estimate, then correct against the real
-    // silhouette. A sphere fit badly over-estimates here — the arena is a flat
-    // disc seen at 40–63° of elevation, so its projected height is a fraction
-    // of its projected width, and the sphere solve strands the deck in the
-    // middle of a mostly empty screen. NDC extent falls off as roughly
-    // 1/distance, so scaling by the overshoot converges in a few passes.
+    // Two unknowns, solved together: how far back to sit, and where to aim.
+    //
+    // Distance alone isn't enough. Aim at the deck's centre and the near goal
+    // line runs out of room long before the far wall does, so the bottom edge
+    // binds while a third of the screen width goes to waste. Balancing the
+    // vertical headroom first — pushing the image up until the top and bottom
+    // are equally tight — frees the solve to keep pushing in until the *width*
+    // binds, which is what puts the arena on the screen edges.
+    //
+    // NDC extent falls off as roughly 1/distance, so scaling by the worst
+    // overshoot converges geometrically; the aim correction rides along in the
+    // same loop and settles with it.
     let d = (ARENA.half * 1.2) / Math.sin(Math.min(vFov, hFov) / 2);
+    let lift = 0;
+
     const probe = _probe;
     probe.fov = this.baseFov;
     probe.aspect = this.aspect;
     probe.updateProjectionMatrix();
 
-    for (let iter = 0; iter < 8; iter++) {
+    for (let iter = 0; iter < 32; iter++) {
       const ch = Math.cos(this.elevation), sh = Math.sin(this.elevation);
       probe.position.set(0, sh * d, ch * d);
-      probe.lookAt(0, this.lookLift, this.lookLift * 0.15);
+      probe.lookAt(0, lift, lift * 0.15);
       probe.updateMatrixWorld(true);
 
-      let mx = 0, my = 0;
-      for (const p of FIT_POINTS) {
+      let wRatio = 0, tRatio = 0, bRatio = 0;
+      for (const p of FIT.width) {
         _tmp.copy(p).project(probe);
-        mx = Math.max(mx, Math.abs(_tmp.x));
-        my = Math.max(my, Math.abs(_tmp.y));
+        wRatio = Math.max(wRatio, Math.abs(_tmp.x) / fillX);
       }
-      const over = Math.max(mx / fillX, my / fillY);
-      if (Math.abs(over - 1) < 0.004) break;
+      for (const p of FIT.top) {
+        _tmp.copy(p).project(probe);
+        tRatio = Math.max(tRatio, Math.max(0, _tmp.y) / fillTop);
+      }
+      for (const p of FIT.bottom) {
+        _tmp.copy(p).project(probe);
+        bRatio = Math.max(bRatio, Math.max(0, -_tmp.y) / fillBottom);
+      }
+
+      // Aiming lower (more negative) raises the image. Nudge toward the point
+      // where top and bottom are equally close to their limits.
+      const imbalance = bRatio - tRatio;
+      lift = clamp(lift - imbalance * 3.2, -7, 2);
+
+      const over = Math.max(wRatio, tRatio, bRatio);
+      if (Math.abs(over - 1) < 0.003 && Math.abs(imbalance) < 0.006) break;
       d *= over;
     }
+
     this.distance = d;
+    this.lookLift = lift;
+
+    // A copy of the camera at its *ideal* framing — no lean, no shake, no
+    // FOV punch. Input mapping is built against this rather than the live
+    // camera so that steering stays stable while the frame is being thrown
+    // around. Tying it to the live camera means the paddle creeps whenever
+    // the camera leans toward an orb, which is exactly the kind of drift
+    // that makes a control feel untrustworthy.
+    const sc = this.stableCam;
+    sc.fov = this.baseFov;
+    sc.aspect = this.aspect;
+    sc.updateProjectionMatrix();
+    sc.position.set(0, Math.sin(this.elevation) * d, Math.cos(this.elevation) * d);
+    sc.lookAt(0, lift, lift * 0.15);
+    sc.updateMatrixWorld(true);
   }
 
   /** Camera shake. `amount` 0..1; stacks and decays quadratically. */
@@ -220,8 +281,11 @@ export class GameCamera {
    * from world X instead silently inverts the controls — and inverts them for
    * two of the four walls only, which is worse than inverting them everywhere.
    *
-   * Projecting live each frame also keeps it correct through shake, the intro
-   * sweep and resizes, with no assumptions baked in about the projection.
+   * Projected against `stableCam` — the camera at its solved framing, with the
+   * lean, shake and FOV punch left out. Using the live camera would be more
+   * "correct" visually but makes the paddle drift under a motionless cursor
+   * every time the frame moves, which is far worse than the paddle sitting a
+   * few pixels off during a screen shake.
    *
    * @param {{nx:number,nz:number,tx:number,tz:number}} craft
    * @param {number} limit  the wall's half-extent
@@ -235,8 +299,8 @@ export class GameCamera {
     const d = ARENA.half - PADDLE.standoff;
     _p1.set(craft.nx * d + craft.tx * -limit, ARENA.playY, craft.nz * d + craft.tz * -limit);
     _p2.set(craft.nx * d + craft.tx * limit, ARENA.playY, craft.nz * d + craft.tz * limit);
-    _p1.project(this.cam);
-    _p2.project(this.cam);
+    _p1.project(this.stableCam);
+    _p2.project(this.stableCam);
 
     let x0 = (_p1.x * 0.5 + 0.5) * viewportWidth;
     let x1 = (_p2.x * 0.5 + 0.5) * viewportWidth;

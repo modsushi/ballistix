@@ -1,4 +1,4 @@
-import { clamp, damp } from './math.js';
+import { clamp } from './math.js';
 import { PADDLE } from './config.js';
 
 /**
@@ -8,8 +8,8 @@ import { PADDLE } from './config.js';
  * straight onto a position along your wall. Relative dragging is gentler on
  * the thumb but it costs you the one thing this game is about — being able to
  * cross the full width of your goal *right now*. Absolute mapping makes that a
- * single motion, and the craft's own acceleration curve smooths the snap so it
- * never looks teleported.
+ * single motion, and the hull's own inertia smooths the snap so it never looks
+ * teleported.
  *
  * For touch the mapping is narrowed past the wall's true screen span (see
  * `POINTER_GAIN`) so a comfortable thumb arc covers the whole goal instead of
@@ -22,12 +22,17 @@ import { PADDLE } from './config.js';
  * minutes still reports a position, so releasing an arrow key would snap the
  * craft back to the cursor.
  *
- * The two families then behave differently on release, because they mean
- * different things. Pointer input is *positional* — the cursor or finger is
- * already telling us where the paddle should be — so there is nothing to
- * return from. Keys and sticks are *directional*: they say "go left", not
- * "be here", so letting go springs the craft back to the middle of its wall
- * (see `PADDLE.recenterRate`), the way a self-centring stick would.
+ * Directional steering is deliberately one behaviour, not two: a press moves at
+ * full speed from the very first frame, and releasing simply stops. No start-up
+ * delay, no acceleration curve, no discrete per-tap step. An earlier design gave
+ * taps their own fixed step and put a delay before continuous travel began, and
+ * that reads as a stutter — jump, pause, go — three events where the player
+ * asked for one.
+ *
+ * Releasing leaves the craft where it is, for both families. Self-centring is
+ * available behind `PADDLE.returnMax` but is off: where you parked the paddle is
+ * information you chose to put there, and pulling it home means re-aiming after
+ * every press.
  */
 
 /** Screen-span multiplier for absolute steering; >1 means less thumb travel. */
@@ -51,6 +56,10 @@ export class Input {
 
     /** Which device last steered: 'none' | 'pointer' | 'keys' | 'pad'. */
     this.source = 'none';
+
+    this._latch = 0;        // seconds a just-pressed key is still honoured for
+    this._latchDir = 0;
+    this._restTime = 0;     // seconds since any directional input
 
     this._downT = 0;
     this._downX = 0;
@@ -126,10 +135,14 @@ export class Input {
 
     this._onKeyDown = (e) => {
       switch (e.code) {
+        // `if (!this.key*)` filters the OS key-repeat storm, so the latch is
+        // armed once per physical press however long it is held.
         case 'ArrowLeft': case 'KeyA':
-          this.keyLeft = true; this.source = 'keys'; e.preventDefault(); break;
+          if (!this.keyLeft) { this.keyLeft = true; this._arm(-1); }
+          this.source = 'keys'; e.preventDefault(); break;
         case 'ArrowRight': case 'KeyD':
-          this.keyRight = true; this.source = 'keys'; e.preventDefault(); break;
+          if (!this.keyRight) { this.keyRight = true; this._arm(1); }
+          this.source = 'keys'; e.preventDefault(); break;
         case 'Space': case 'ShiftLeft': this.surgeRequested = true; e.preventDefault(); break;
         case 'Escape': case 'KeyP': this.pauseRequested = true; break;
       }
@@ -151,6 +164,9 @@ export class Input {
     window.addEventListener('contextmenu', (e) => e.preventDefault());
   }
 
+  /** Arm the press latch so a very short tap still produces movement. */
+  _arm(dir) { this._latchDir = dir; this._latch = PADDLE.minPress; }
+
   /** Poll the gamepad; returns an axis in -1..1 plus button edges. */
   _pollPad() {
     if (this._padIndex === null || !navigator.getGamepads) return 0;
@@ -158,8 +174,12 @@ export class Input {
     if (!gp) return 0;
     let ax = gp.axes[0] || 0;
     if (Math.abs(ax) < 0.14) ax = 0;
-    if (gp.buttons[14]?.pressed) ax = -1;
-    if (gp.buttons[15]?.pressed) ax = 1;
+    const dl = !!gp.buttons[14]?.pressed, dr = !!gp.buttons[15]?.pressed;
+    if (dl && !this._padL) this._arm(-1);
+    if (dr && !this._padR) this._arm(1);
+    this._padL = dl; this._padR = dr;
+    if (dl) ax = -1;
+    if (dr) ax = 1;
     if (gp.buttons[0]?.pressed && !this._padA) this.surgeRequested = true;
     this._padA = gp.buttons[0]?.pressed;
     if (gp.buttons[9]?.pressed && !this._padStart) this.pauseRequested = true;
@@ -184,8 +204,17 @@ export class Input {
     if (this.keyRight) axis += 1;
     if (padAxis !== 0) { axis = padAxis; this.source = 'pad'; }
 
+    // Honour a press that was released before we got to look at it.
+    if (axis === 0 && this._latch > 0) axis = this._latchDir;
+
     if (axis !== 0) {
-      return clamp(currentU + axis * sign * limit * 2.2 * dt, -limit, limit);
+      // Full speed on the first frame. No start-up delay, no acceleration
+      // curve — the hull's own inertia is the only smoothing, and anything on
+      // top of it is felt as the control hesitating.
+      this._latch = Math.max(0, this._latch - dt);
+      this._restTime = 0;
+      const speed = PADDLE.moveSpeed * Math.min(1, Math.abs(axis));
+      return clamp(currentU + Math.sign(axis) * sign * speed * dt, -limit, limit);
     }
 
     // Whichever device the player last actually used owns the paddle.
@@ -201,26 +230,39 @@ export class Input {
       return this.active ? clamp(mapAbsolute(this.screenX), -limit, limit) : currentU;
     }
 
+    // Nothing is driving the paddle: leave it where the player put it. When
+    // self-centring is enabled, `_recentre` walks it home from here instead.
+    this._restTime += dt;
     return this._recentre(currentU, dt);
   }
 
   /**
    * Ease a released directional control back to the middle of the wall.
    *
-   * Exponential rather than linear so it leaves the edge fast and settles
-   * softly, and clamped to the craft's own top speed so the return never
-   * demands motion the craft can't produce — otherwise the target runs away
-   * from the hull and the recoil/bank animation, which are driven off actual
-   * velocity, stop matching what you see.
+   * Disabled by default (`PADDLE.returnMax === 0`), in which case this is a
+   * no-op and the craft holds position.
+   *
+   * When enabled: constant speed rather than exponential, and ramped by *time
+   * since input* rather than by distance from centre. Both choices matter:
+   *
+   *   · An exponential return is fastest when you are furthest out, which is
+   *     precisely where a player is most likely to be trying to hold station.
+   *     A time-ramped constant speed behaves the same wherever you are, so
+   *     tap-to-park works at the edge exactly as it does near the middle.
+   *   · Ramping from a slow start means the return is immediate — the craft
+   *     moves on the very next frame — without being so quick off the mark
+   *     that a single tap can't out-run it.
    */
   _recentre(currentU, dt) {
-    const rate = PADDLE.recenterRate;
-    if (rate <= 0 || currentU === 0) return currentU;
-    let next = damp(currentU, 0, rate, dt);
-    const maxStep = PADDLE.maxSpeed * dt;
-    next = clamp(next, currentU - maxStep, currentU + maxStep);
-    // Exponential decay never truly arrives; snap the last sliver.
-    return Math.abs(next) < 0.02 ? 0 : next;
+    const { returnSpeed, returnMax, returnRamp } = PADDLE;
+    if (returnMax <= 0 || currentU === 0) return currentU;
+
+    const k = returnRamp > 0 ? clamp(this._restTime / returnRamp, 0, 1) : 1;
+    const speed = returnSpeed + (returnMax - returnSpeed) * k * k;
+
+    const dir = Math.sign(currentU);
+    const out = currentU - dir * speed * dt;
+    return Math.sign(out) === dir ? out : 0;   // never overshoot past centre
   }
 
   consumeSurge() { const s = this.surgeRequested; this.surgeRequested = false; return s; }
@@ -233,6 +275,8 @@ export class Input {
     this.keyLeft = this.keyRight = false;
     this.surgeRequested = false;
     this.source = 'none';
+    this._latch = 0;
+    this._restTime = 0;
   }
 
   dispose() {
