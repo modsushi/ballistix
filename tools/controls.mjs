@@ -298,15 +298,19 @@ const posAt = (t) => (startCurve.find((p) => p[0] >= t) || startCurve[startCurve
 const limitU = await page.evaluate(() => window.__ballistix.game.crafts[0].limit);
 const scaleAt = (t) => (startCurve.find((p) => p[0] >= t) || startCurve[startCurve.length - 1])[2];
 const windows = [];
+let skippedSlow = 0;
 for (let t = 0; t < 360; t += 60) {
-  if (posAt(t) > limitU - 0.6) break;
+  if (posAt(t) > limitU - 0.6) break;      // pinned: a zero here is correct
   const scale = Math.min(scaleAt(t), scaleAt(t + 60));
-  if (scale < 0.9) continue;
+  if (scale < 0.9) { skippedSlow++; continue; }   // hit-stop, not a stall
   windows.push(+(posAt(t + 60) - posAt(t)).toFixed(2));
 }
 check('a held key moves continuously, with no stall',
   windows.length >= 2 && windows.every((d) => d > 0.35),
-  `per-60ms displacement at full sim speed: [${windows.join(', ')}]`);
+  windows.length >= 2
+    ? `per-60ms displacement at full sim speed: [${windows.join(', ')}]`
+    : `nothing measurable — started at u=${posAt(0).toFixed(2)} of ${limitU.toFixed(1)}, `
+      + `${skippedSlow} window(s) lost to slow motion`);
 
 // --- 10b. a very short tap still registers ---------------------------------
 // Shorter than a frame at 60Hz. Without the press latch the simulation never
@@ -421,8 +425,12 @@ const stillThere = await tU();
 check('touch release holds position', Math.abs(stillThere - settled) < 0.15,
   `u ${settled} → ${stillThere} after release`);
 
-// A tap (down/up with no movement) is the surge gesture.
-await tp.evaluate(() => { window.__ballistix.game.crafts[0].surge = 1; });
+// A tap is the ability gesture. It spends the ARC when that is charged and
+// falls back to the surge otherwise — so both branches need proving.
+await tp.evaluate(() => {
+  const c = window.__ballistix.game.crafts[0];
+  c.alive = true; c.arc = 1; c.arcActive = 0; c.surge = 1;
+});
 await tp.evaluate(async () => {
   const cv = document.getElementById('gl');
   const mk = (type, target) => target.dispatchEvent(new PointerEvent(type, {
@@ -434,8 +442,33 @@ await tp.evaluate(async () => {
   mk('pointerup', window);
 });
 await tp.waitForTimeout(400);
+const afterArc = await tp.evaluate(() => {
+  const c = window.__ballistix.game.crafts[0];
+  return { arc: +c.arc.toFixed(2), live: +c.arcActive.toFixed(2), surge: +c.surge.toFixed(2) };
+});
+check('tap raises the ARC when it is charged',
+  afterArc.live > 0 && afterArc.arc < 0.5 && afterArc.surge > 0.9,
+  `arc ${afterArc.arc} live ${afterArc.live}s, surge untouched at ${afterArc.surge}`);
+
+// Drain the ARC, then tap again: this time it must fall through to the surge.
+await tp.evaluate(() => {
+  const c = window.__ballistix.game.crafts[0];
+  c.arc = 0; c.arcActive = 0; c.surge = 1;
+});
+await tp.evaluate(async () => {
+  const cv = document.getElementById('gl');
+  const mk = (type, target) => target.dispatchEvent(new PointerEvent(type, {
+    pointerId: 11, pointerType: 'touch', isPrimary: true, bubbles: true, cancelable: true,
+    clientX: 195, clientY: 700,
+  }));
+  mk('pointerdown', cv);
+  await new Promise((r) => setTimeout(r, 60));
+  mk('pointerup', window);
+});
+await tp.waitForTimeout(300);
 const surged = await tp.evaluate(() => +window.__ballistix.game.crafts[0].surge.toFixed(2));
-check('tap triggers surge', surged < 0.5, `surge charge now ${surged}`);
+check('tap falls back to the surge when the ARC is spent',
+  surged < 0.5, `surge charge now ${surged}`);
 
 await browser.close();
 const failed = results.filter((r) => !r.ok).length;

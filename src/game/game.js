@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { ARENA, DIFFICULTY, ORB, PADDLE, PLAYERS, RULES } from '../core/config.js';
+import { ARC, ARENA, DIFFICULTY, ORB, PADDLE, PLAYERS, RULES } from '../core/config.js';
 import { clamp, damp, lerp, rand } from '../core/math.js';
 import { Arena } from './arena.js';
 import { Craft } from './craft.js';
@@ -7,6 +7,7 @@ import { Orb } from './orb.js';
 import { AI } from './ai.js';
 import { Effects } from './effects.js';
 import { stepOrb, collideOrbs } from './collide.js';
+import { ArcField } from '../gfx/arcfield.js';
 import { POINTER_GAIN } from '../core/input.js';
 
 /**
@@ -63,6 +64,10 @@ export class Game {
       o.id = i;
       this.orbs.push(o);
     }
+
+    // One lightning fence per pilot, parked at their goal line.
+    const span = 2 * (ARENA.half - ARENA.chamfer);
+    this.arcFields = this.crafts.map((c) => new ArcField(c, span, PLAYERS[c.index].color, scene));
 
     this.ais = [];
     this.state = State.INTRO;
@@ -129,6 +134,9 @@ export class Game {
     for (const c of this.crafts) {
       c.alive = true;
       c.dying = 0;
+      c.arc = ARC.startCharge;
+      c.arcActive = 0;
+      c.arcJustFired = false;
       c.u = 0; c.vu = 0; c.targetU = 0;
       c.recoil = 0; c.hitFlash = 0;
       c.surge = 1; c.surgeActive = 0;
@@ -139,6 +147,8 @@ export class Game {
       c.sync(0);
     }
     for (const o of this.orbs) o.kill();
+    for (const f of this.arcFields || []) { f.extinguish(); f.update(1, 0); }
+    this._arcWasReady = false;
 
     // Pilot 0 gets an AI too — it only drives during attract, but keeping it
     // allocated means switching modes never has to build one mid-frame.
@@ -231,6 +241,7 @@ export class Game {
     }
 
     // ---- presentation -------------------------------------------------------
+    this._updateArcs(dt);
     for (const c of this.crafts) c.update(dt, this.matchTime);
     for (const o of this.orbs) o.updateVisual(dt, this.matchTime);
     this.arena.aimFill(this.camera.cam.position);
@@ -275,9 +286,13 @@ export class Game {
     const m = this._mapper;
     if (m) me.steer(this.input.resolve(h, m.map, me.limit, me.targetU, m.sign));
 
-    if (this.input.consumeSurge() && me.trySurge()) {
-      this.effects.surge(me);
+    // Space (and tap, and gamepad A) spend the best ability available: the
+    // fence when it is charged, otherwise a surge. Shift is surge-only, for
+    // players who want to hold the fence back for a moment they choose.
+    if (this.input.consumeSurge()) {
+      if (!me.tryArc() && me.trySurge()) this.effects.surge(me);
     }
+    if (this.input.consumeSurgeOnly() && me.trySurge()) this.effects.surge(me);
   }
 
   // ------------------------------------------------------------------ events --
@@ -300,6 +315,10 @@ export class Game {
         break;
       case 'orbclash':
         this.effects.orbClash(e);
+        break;
+      case 'arc':
+        this.effects.arcStrike(e);
+        this.arcFields[e.craft.index].strike(e.u01, 0.9);
         break;
       case 'goal':
         this._concede(e);
@@ -521,6 +540,42 @@ export class Game {
     return { order, finalScores: this.scores.slice(), stats: this.stats };
   }
 
+  /**
+   * Drive the fences off craft state.
+   *
+   * Reading the rising edge here rather than plumbing a callback through both
+   * the player's input path and the AI's means the two can't drift apart — a
+   * fence raised by a rival gets exactly the same treatment as one of yours.
+   */
+  _updateArcs(dt) {
+    for (let i = 0; i < 4; i++) {
+      const c = this.crafts[i];
+      const f = this.arcFields[i];
+
+      if (c.arcJustFired) {
+        c.arcJustFired = false;
+        f.ignite(c.u);
+        this.effects.arcIgnite(c);
+        if (i === 0) this._say('ARC UP', 900);
+      }
+      if (f.active && c.arcActive <= 0) {
+        f.extinguish();
+        this.effects.arcExpire(c);
+      }
+      if (c.arcActive > 0) this.effects.arcCrackle(c, dt);
+      f.update(dt, this.matchTime);
+    }
+
+    // The charge meter is the player's only readout for it.
+    const me = this.crafts[0];
+    const wasReady = this._arcWasReady === true;
+    const ready = me.arc >= 1 && me.arcActive <= 0;
+    this.hud.setArc(me.arcActive > 0 ? me.arcActive / ARC.duration : me.arc,
+      ready, me.arcActive > 0);
+    if (ready && !wasReady && !this.attract) this.audio.arcReady();
+    this._arcWasReady = ready;
+  }
+
   // ------------------------------------------------------------------ polish --
   _updateCameraFocus(dtReal) {
     // Lean toward the busiest part of the deck, weighted by orb speed so the
@@ -569,6 +624,7 @@ export class Game {
   }
 
   dispose() {
+    for (const f of this.arcFields) f.dispose();
     this.effects.dispose();
     for (const c of this.crafts) c.dispose();
     for (const o of this.orbs) o.dispose();

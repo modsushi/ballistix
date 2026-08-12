@@ -444,6 +444,179 @@ export class Audio {
     o.start(t + 1.0); o.stop(t + 1.22);
   }
 
+  // ------------------------------------------------------------------ arc --
+
+  /**
+   * Raising the fence: a rising bandpassed noise sweep, hard amplitude
+   * modulation at mains-hum rate, and a sub thump underneath.
+   *
+   * The AM is what makes it read as *electrical* rather than as a whoosh —
+   * chopping the noise at ~55Hz is the same trick the shader plays with its
+   * gated filaments, and hearing and seeing the same rate lands them together.
+   */
+  arcOn() {
+    if (!this.ready || this.muted) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    this.duck(0.5, 0.5);
+
+    const n = this._noise(0.7, t);
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass'; bp.Q.value = 3.5;
+    bp.frequency.setValueAtTime(320, t);
+    bp.frequency.exponentialRampToValueAtTime(4200, t + 0.30);
+
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.34, t + 0.10);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.62);
+
+    // Ring-modulate the noise to chop it into a crackle.
+    const am = ctx.createGain();
+    am.gain.value = 0;
+    const lfo = ctx.createOscillator();
+    lfo.type = 'square';
+    lfo.frequency.setValueAtTime(38, t);
+    lfo.frequency.exponentialRampToValueAtTime(120, t + 0.5);
+    const lfoAmt = ctx.createGain();
+    lfoAmt.gain.value = 1;
+    lfo.connect(lfoAmt); lfoAmt.connect(am.gain);
+    lfo.start(t); lfo.stop(t + 0.7);
+
+    n.connect(bp); bp.connect(am); am.connect(g); g.connect(this.sfx);
+
+    // Sub thump for weight.
+    const o = ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(180, t);
+    o.frequency.exponentialRampToValueAtTime(42, t + 0.4);
+    const og = ctx.createGain();
+    og.gain.setValueAtTime(0, t);
+    og.gain.linearRampToValueAtTime(0.42, t + 0.012);
+    og.gain.exponentialRampToValueAtTime(0.0001, t + 0.55);
+    o.connect(og); og.connect(this.sfx);
+    o.start(t); o.stop(t + 0.6);
+
+    this._arcLoopStart();
+  }
+
+  /** The sustained hum while the fence is up. Built once, gated by a gain. */
+  _arcLoopStart() {
+    const ctx = this.ctx;
+    if (!this._arcBus) {
+      const bus = ctx.createGain();
+      bus.gain.value = 0;
+      bus.connect(this.sfx);
+
+      // Buzz: a detuned saw pair through a resonant bandpass — the classic
+      // transformer-hum recipe — plus filtered noise for the sizzle on top.
+      const filt = ctx.createBiquadFilter();
+      filt.type = 'bandpass'; filt.frequency.value = 900; filt.Q.value = 6;
+      filt.connect(bus);
+
+      for (const f of [58, 87.5, 174]) {
+        const o = ctx.createOscillator();
+        o.type = 'sawtooth';
+        o.frequency.value = f;
+        const g = ctx.createGain();
+        g.gain.value = f > 100 ? 0.10 : 0.22;
+        o.connect(g); g.connect(filt);
+        o.start();
+      }
+
+      const hiss = this._noise(1e6, ctx.currentTime);
+      const hp = ctx.createBiquadFilter();
+      hp.type = 'highpass'; hp.frequency.value = 2600;
+      const hg = ctx.createGain();
+      hg.gain.value = 0.075;
+      hiss.connect(hp); hp.connect(hg); hg.connect(bus);
+
+      // Irregular tremolo so the hum never sits perfectly still.
+      const trem = ctx.createOscillator();
+      trem.type = 'sine'; trem.frequency.value = 7.3;
+      const tremAmt = ctx.createGain();
+      tremAmt.gain.value = 420;
+      trem.connect(tremAmt); tremAmt.connect(filt.frequency);
+      trem.start();
+
+      this._arcBus = bus;
+    }
+    const g = this._arcBus.gain;
+    const t = ctx.currentTime;
+    g.cancelScheduledValues(t);
+    g.setValueAtTime(g.value, t);
+    g.linearRampToValueAtTime(0.30, t + 0.10);
+  }
+
+  /** Fence expiring: cut the hum and drop a power-down over the top. */
+  arcOff() {
+    if (!this.ready || this.muted) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    if (this._arcBus) {
+      const g = this._arcBus.gain;
+      g.cancelScheduledValues(t);
+      g.setValueAtTime(g.value, t);
+      g.exponentialRampToValueAtTime(0.0001, t + 0.28);
+    }
+    const o = ctx.createOscillator();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(900, t);
+    o.frequency.exponentialRampToValueAtTime(70, t + 0.34);
+    const f = ctx.createBiquadFilter();
+    f.type = 'lowpass'; f.Q.value = 8;
+    f.frequency.setValueAtTime(3000, t);
+    f.frequency.exponentialRampToValueAtTime(200, t + 0.34);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.18, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.38);
+    o.connect(f); f.connect(g); g.connect(this.sfx);
+    o.start(t); o.stop(t + 0.4);
+  }
+
+  /** An orb striking the fence: a short, bright electrical snap. */
+  arcHit(speed01 = 0.5) {
+    if (!this.ready || this.muted) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+
+    const n = this._noise(0.14, t);
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass'; bp.Q.value = 1.2;
+    bp.frequency.setValueAtTime(lerp(2600, 5200, speed01), t);
+    bp.frequency.exponentialRampToValueAtTime(700, t + 0.12);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.30, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.13);
+    n.connect(bp); bp.connect(g); g.connect(this.sfx);
+
+    // A pitched zap on top so successive hits stay distinguishable.
+    const o = ctx.createOscillator();
+    o.type = 'square';
+    o.frequency.setValueAtTime(lerp(700, 1300, speed01) * rand(0.9, 1.12), t);
+    o.frequency.exponentialRampToValueAtTime(160, t + 0.09);
+    const og = ctx.createGain();
+    og.gain.setValueAtTime(0, t);
+    og.gain.linearRampToValueAtTime(0.13, t + 0.003);
+    og.gain.exponentialRampToValueAtTime(0.0001, t + 0.11);
+    o.connect(og); og.connect(this.sfx);
+    o.start(t); o.stop(t + 0.12);
+  }
+
+  /** The fence coming off cooldown — a short, bright two-note ping. */
+  arcReady() {
+    if (!this.ready || this.muted) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    [0, 0.075].forEach((off, i) => {
+      const o = ctx.createOscillator();
+      o.type = 'triangle';
+      o.frequency.value = semi(i === 0 ? 12 : 19);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, t + off);
+      g.gain.linearRampToValueAtTime(0.075, t + off + 0.006);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + off + 0.30);
+      o.connect(g); g.connect(this.sfx);
+      o.start(t + off); o.stop(t + off + 0.32);
+    });
+  }
+
   ui(kind = 'tick') {
     if (!this.ready || this.muted) return;
     const ctx = this.ctx, t = ctx.currentTime;

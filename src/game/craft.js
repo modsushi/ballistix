@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { ARENA, PADDLE, SIDES } from '../core/config.js';
+import { ARC, ARENA, PADDLE, SIDES } from '../core/config.js';
 import { craftMaterials, applyMaterials } from '../gfx/materials.js';
 import { clamp, damp, lerp } from '../core/math.js';
 
@@ -43,6 +43,9 @@ export class Craft {
 
     this.surge = 1;          // 0..1 readiness
     this.surgeActive = 0;    // seconds of boosted deflection remaining
+    this.arc = ARC.startCharge;   // 0..1 readiness of the lightning fence
+    this.arcActive = 0;      // seconds the fence stays up
+    this.arcJustFired = false;    // rising edge, consumed by Game for VFX
     this.recoil = 0;
     this.hitFlash = 0;
     this.dying = 0;
@@ -218,6 +221,18 @@ export class Craft {
     return true;
   }
 
+  /** Raise the lightning fence across the whole goal line. */
+  tryArc() {
+    if (!this.alive || this.arc < 1 || this.arcActive > 0) return false;
+    this.arc = 0;
+    this.arcActive = ARC.duration;
+    this.arcJustFired = true;
+    return true;
+  }
+
+  /** Nominal distance of the arc plane from the centre — free of recoil jitter. */
+  get arcDist() { return ARENA.half - PADDLE.standoff; }
+
   /** Called when an orb is deflected off this craft. */
   onDeflect(u01, power) {
     this.defMat.uniforms.uHitU.value = u01;
@@ -256,10 +271,14 @@ export class Craft {
       this.throttle = damp(this.throttle, Math.min(1, Math.abs(this.vu) / PADDLE.maxSpeed), 9, dt);
       this.surge = Math.min(1, this.surge + dt / 4.2);
       this.surgeActive = Math.max(0, this.surgeActive - dt);
+      this.arcActive = Math.max(0, this.arcActive - dt);
+      // The fence only recharges once it is down, so uptime can't be chained.
+      if (this.arcActive <= 0) this.arc = Math.min(1, this.arc + dt / ARC.cooldown);
     } else {
       this.dying += dt;
       this.vu *= Math.exp(-dt * 2);
       this.u += this.vu * dt;
+      this.arcActive = 0;
     }
 
     this.recoil = damp(this.recoil, 0, 7.5, dt);

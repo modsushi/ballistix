@@ -388,6 +388,67 @@ body::after {
 .self-pips { display: flex; gap: 4px; width: clamp(70px, 22vw, 108px); }
 .self-pips .pip { height: 6px; --c: var(--p0); }
 
+/* --- arc charge ------------------------------------------------------ */
+.arc-meter {
+  display: flex; align-items: center; gap: 6px;
+  width: clamp(70px, 22vw, 108px);
+  --arc: #9fe8ff;
+}
+.arc-bolt {
+  width: 9px; height: 15px; flex: none;
+  fill: var(--ink-faint);
+  transition: fill 0.3s var(--ease-out), filter 0.3s;
+}
+.arc-bar {
+  flex: 1; height: 4px;
+  background: rgba(90, 140, 190, 0.16);
+  clip-path: polygon(2px 0, 100% 0, calc(100% - 2px) 100%, 0 100%);
+  overflow: hidden;
+}
+.arc-bar i {
+  display: block; height: 100%; width: 0%;
+  background: linear-gradient(90deg, var(--p0-deep), var(--arc));
+  transition: width 0.12s linear, background 0.3s;
+}
+.arc-word {
+  font-size: 7.5px; font-weight: 700;
+  letter-spacing: 0.16em; text-indent: 0.16em;
+  color: var(--ink-faint);
+  min-width: 4.2em;
+  transition: color 0.3s var(--ease-out);
+}
+
+/* Charged: the whole module lights up and breathes. The craft's own deflector
+   is the diegetic tell; this is the glanceable one. */
+.arc-meter.ready { --arc: #ffffff; }
+.arc-meter.ready .arc-bolt {
+  fill: var(--p0);
+  filter: drop-shadow(0 0 6px rgba(36, 226, 255, 0.9));
+  animation: arcPulse 1.5s var(--ease-in-out) infinite;
+}
+.arc-meter.ready .arc-bar i {
+  background: linear-gradient(90deg, var(--p0), #ffffff);
+  box-shadow: 0 0 10px rgba(36, 226, 255, 0.85);
+}
+.arc-meter.ready .arc-word {
+  color: var(--p0);
+  text-shadow: 0 0 10px rgba(36, 226, 255, 0.7);
+}
+@keyframes arcPulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.22); opacity: 0.72; }
+}
+
+/* Burning: the bar drains instead of filling, in a hotter colour. */
+.arc-meter.live { --arc: #ffffff; }
+.arc-meter.live .arc-bar i {
+  background: linear-gradient(90deg, #ffffff, var(--p0));
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.9);
+  transition: width 0.06s linear;
+}
+.arc-meter.live .arc-bolt { fill: #fff; filter: drop-shadow(0 0 8px #fff); }
+.arc-meter.live .arc-word { color: #fff; text-shadow: 0 0 12px rgba(255,255,255,0.8); }
+
 .ghost-btn {
   pointer-events: auto;
   appearance: none; border: 0; cursor: pointer;
@@ -560,6 +621,8 @@ body::after {
 @media (max-height: 460px) {
   .hud-top, .hud-bottom { --pad: 8px; }
   .self-ring { width: 48px; }
+  .arc-meter { width: clamp(62px, 18vw, 92px); gap: 4px; }
+  .arc-word { font-size: 7px; min-width: 3.6em; }
   .pod { padding: 5px 7px 6px; min-width: 54px; }
   .menu-inner, .boot-inner { gap: 12px; }
   .wordmark.big b { font-size: clamp(30px, 8vw, 52px); }

@@ -69,6 +69,18 @@ for (const v of VIEWS) {
   await page.waitForTimeout(9000);
   await page.screenshot({ path: `${OUT}/${v.name}-play2.png` });
 
+  // Raise the ARC so the fence and its HUD meter are captured at every viewport.
+  await page.evaluate(() => {
+    const g = window.__ballistix.game, c = g.crafts[0];
+    c.alive = true; c.dying = 0; c.root.visible = true;
+    g.alive[0] = true;
+    c.arc = 1; c.arcActive = 0;
+    c.tryArc();
+  });
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: `${OUT}/${v.name}-arc.png` });
+  await page.waitForTimeout(2600);
+
   // Force the result screen so its layout is captured at every viewport.
   await page.evaluate(() => {
     const a = window.__ballistix;

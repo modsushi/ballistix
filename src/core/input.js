@@ -52,6 +52,7 @@ export class Input {
     this.keyRight = false;
 
     this.surgeRequested = false;
+    this.surgeOnlyRequested = false;
     this.pauseRequested = false;
 
     /** Which device last steered: 'none' | 'pointer' | 'keys' | 'pad'. */
@@ -143,7 +144,9 @@ export class Input {
         case 'ArrowRight': case 'KeyD':
           if (!this.keyRight) { this.keyRight = true; this._arm(1); }
           this.source = 'keys'; e.preventDefault(); break;
-        case 'Space': case 'ShiftLeft': this.surgeRequested = true; e.preventDefault(); break;
+        case 'Space': this.surgeRequested = true; e.preventDefault(); break;
+        // Surge only — lets a player keep the fence in reserve.
+        case 'ShiftLeft': case 'ShiftRight': this.surgeOnlyRequested = true; e.preventDefault(); break;
         case 'Escape': case 'KeyP': this.pauseRequested = true; break;
       }
     };
@@ -266,6 +269,7 @@ export class Input {
   }
 
   consumeSurge() { const s = this.surgeRequested; this.surgeRequested = false; return s; }
+  consumeSurgeOnly() { const s = this.surgeOnlyRequested; this.surgeOnlyRequested = false; return s; }
   consumePause() { const p = this.pauseRequested; this.pauseRequested = false; return p; }
 
   /** Drop any held state — used when a screen opens over the game. */
@@ -274,6 +278,7 @@ export class Input {
     this.pointerId = null;
     this.keyLeft = this.keyRight = false;
     this.surgeRequested = false;
+    this.surgeOnlyRequested = false;
     this.source = 'none';
     this._latch = 0;
     this._restTime = 0;

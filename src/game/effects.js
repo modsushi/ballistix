@@ -273,6 +273,98 @@ export class Effects {
     this.cam.punch(7);
   }
 
+  // ------------------------------------------------------------------ arc --
+
+  /** The fence going up: a discharge running out along the goal line. */
+  arcIgnite(craft) {
+    const p = PLAYERS[craft.index];
+    const n = this.preset.sparks;
+    const d = craft.arcDist;
+    const half = ARENA.half - ARENA.chamfer;
+
+    // Sparks fired along the whole span, timed by distance so the burst reads
+    // as travelling outward from the craft rather than appearing all at once.
+    const steps = Math.round(14 * (n / 520 + 0.5));
+    for (let i = 0; i < steps; i++) {
+      const u = (i / (steps - 1) - 0.5) * 2 * half;
+      this.sparks.burst({
+        at: [craft.nx * d + craft.tx * u, ARENA.playY + rand(-0.2, 1.4), craft.nz * d + craft.tz * u],
+        dir: [-craft.nx, 0.5, -craft.nz], spread: 0.85,
+        count: 3, speedMin: 3, speedMax: 13, lifeMin: 0.14, lifeMax: 0.5,
+        sizeMin: 4, sizeMax: 12, color: 0xffffff, color2: p.color,
+        kind: 1, drag: 3.6, grav: -5, jitter: 0.5,
+      });
+    }
+
+    const pos = craft.worldPos(new THREE.Vector3());
+    this.rings.spawn(pos.x, ARENA.playY - 0.8, pos.z, 0.4, 9, 0.6, p.color);
+    this.rings.spawn(pos.x, ARENA.playY, pos.z, 0.3, 5, 0.45, 0xffffff,
+      0, Math.atan2(craft.nx, craft.nz));
+    this.arena.shock(pos.x, pos.z, 1.5, p.color);
+
+    this.flash = craft.index === 0 ? 0.34 : 0.16;
+    this.flashColor.set(0xd8f0ff).convertSRGBToLinear();
+    this.audio.arcOn();
+    this.cam.shake(craft.index === 0 ? 0.34 : 0.16);
+    this.cam.punch(craft.index === 0 ? 3.2 : 1.4);
+  }
+
+  /** An orb bouncing off a fence. */
+  arcStrike(e) {
+    const c = e.craft;
+    const p = PLAYERS[c.index];
+    const speed01 = clamp((e.speed - 15) / 20, 0, 1);
+
+    this.sparks.burst({
+      at: [e.x, ARENA.playY, e.z],
+      dir: [-c.nx, 0.45, -c.nz], spread: 0.55,
+      count: Math.round(lerp(14, 28, speed01) * (this.preset.sparks / 520 + 0.4)),
+      speedMin: 8, speedMax: 24 + speed01 * 14,
+      lifeMin: 0.12, lifeMax: 0.4, sizeMin: 5, sizeMax: 14,
+      color: 0xffffff, color2: p.color, kind: 1, drag: 3.2, grav: -8, jitter: 0.4,
+    });
+    // A few slow embers so the strike leaves something hanging in the air.
+    this.sparks.burst({
+      at: [e.x, ARENA.playY, e.z], spread: 2,
+      count: Math.round(6 * (this.preset.sparks / 520 + 0.4)),
+      speedMin: 1, speedMax: 5, lifeMin: 0.4, lifeMax: 0.9,
+      sizeMin: 8, sizeMax: 18, color: p.color, color2: 0x9fd8ff,
+      kind: 0, drag: 2.2, grav: -1.5,
+    });
+
+    this.rings.spawn(e.x, ARENA.playY - 0.78, e.z, 0.2, 3.4, 0.4, 0xffffff);
+    this.arena.shock(e.x, e.z, 0.8 + speed01 * 0.5, p.color);
+    this.audio.arcHit(speed01);
+    this.cam.shake(c.index === 0 ? 0.16 : 0.05);
+    if (c.index === 0) this.cam.punch(1.1);
+  }
+
+  /** Idle crackle while a fence is up. Called every frame it is active. */
+  arcCrackle(craft, dt) {
+    // Rate-based rather than per-frame, so the density doesn't ride framerate.
+    this._crackle = (this._crackle || 0) + dt * 26;
+    if (this._crackle < 1) return;
+    this._crackle = 0;
+    const p = PLAYERS[craft.index];
+    const d = craft.arcDist;
+    const half = ARENA.half - ARENA.chamfer;
+    const u = rand(-half, half);
+    this.sparks.burst({
+      at: [craft.nx * d + craft.tx * u, ARENA.playY + rand(-0.3, 1.5), craft.nz * d + craft.tz * u],
+      dir: [-craft.nx, 0.3, -craft.nz], spread: 1.1,
+      count: 1, speedMin: 2, speedMax: 9, lifeMin: 0.1, lifeMax: 0.32,
+      sizeMin: 3, sizeMax: 9, color: 0xffffff, color2: p.color,
+      kind: 1, drag: 4, grav: -6,
+    });
+  }
+
+  arcExpire(craft) {
+    const p = PLAYERS[craft.index];
+    const pos = craft.worldPos(new THREE.Vector3());
+    this.rings.spawn(pos.x, ARENA.playY - 0.8, pos.z, 6, 0.5, 0.4, p.color);
+    this.audio.arcOff();
+  }
+
   surge(craft) {
     const pos = craft.worldPos(new THREE.Vector3());
     const p = PLAYERS[craft.index];

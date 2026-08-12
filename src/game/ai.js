@@ -143,6 +143,19 @@ export class AI {
       if (this.panic > 0.55 && best.time < 0.55 && c.surge >= 1 && Math.random() < this.diff.aggression * dt * 22) {
         c.trySurge();
       }
+
+      // The fence is for shots that simply cannot be reached, and for the point
+      // that would end their match. Spending it on a save they'd make anyway is
+      // the difference between an opponent that looks desperate and one that
+      // looks like it knows what the ability is for.
+      if (c.arc >= 1 && best.time < 1.1) {
+        // Can this pilot physically get there in time? Their reach is their
+        // deflector's half-width plus however far they can travel before the
+        // orb lands, at the speed their difficulty allows.
+        const reach = c.halfLen + PADDLE.maxSpeed * this.diff.speed * best.time;
+        const unreachable = Math.abs(best.lateral - c.u) > reach;
+        if (unreachable || scores[this.craft.index] <= 1) c.tryArc();
+      }
     } else {
       // ---- 2. idle: hold near centre with a slow drift --------------------
       this.idlePhase += dt * 0.55;

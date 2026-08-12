@@ -1,4 +1,4 @@
-import { ARENA, ORB, PADDLE } from '../core/config.js';
+import { ARC, ARENA, ORB, PADDLE } from '../core/config.js';
 import { clamp } from '../core/math.js';
 
 /**
@@ -49,6 +49,52 @@ export function stepOrb(o, dt, ctx) {
 
     o.x += o.vx * step;
     o.z += o.vz * step;
+
+    // ---- lightning fences ------------------------------------------------
+    // Checked before paddles: while a pilot's fence is up it spans their whole
+    // goal line, so nothing reaches their deflector at all. Collision is
+    // one-sided (only orbs travelling outward) — an orb caught behind the fence
+    // when it ignited bounces off the back wall and passes straight back out
+    // through it, rather than being trapped in the gap.
+    for (const c of crafts) {
+      if (!c.alive || c.arcActive <= 0) continue;
+      const vn = o.vx * c.nx + o.vz * c.nz;
+      if (vn <= 0) continue;
+
+      const d = c.arcDist;
+      const ln = o.x * c.nx + o.z * c.nz - d;      // out through the fence
+      if (ln + ORB.radius < 0 || ln > ORB.radius) continue;
+      const lt = o.x * c.tx + o.z * c.tz;          // along the fence
+      const halfSpan = ARENA.half - ARENA.chamfer;
+      if (Math.abs(lt) > halfSpan) continue;
+
+      // Reflect, then let the pilot's motion curve it — the only steering they
+      // have while shielded.
+      o.vx -= 2 * vn * c.nx;
+      o.vz -= 2 * vn * c.nz;
+      const english = clamp(c.vu / PADDLE.maxSpeed, -1, 1) * ARC.english;
+      o.vx += c.tx * english * speed;
+      o.vz += c.tz * english * speed;
+
+      const sp = Math.min(ORB.maxSpeed, speed + ARC.speedGain);
+      const [ux, uz] = unstick(o.vx, o.vz, c.nx, c.nz, sp);
+      const ul = Math.hypot(ux, uz) || 1;
+      o.vx = (ux / ul) * sp;
+      o.vz = (uz / ul) * sp;
+      o.speed = sp;
+
+      // Sit the orb clear of the plane so the next substep can't re-trigger.
+      const push = ln + ORB.radius + 0.02;
+      o.x -= c.nx * push;
+      o.z -= c.nz * push;
+
+      o.registerImpact(-c.nx, -c.nz, 1.1);
+      events.push({
+        type: 'arc', orb: o, craft: c, speed: sp, x: o.x, z: o.z,
+        u01: clamp(lt / halfSpan, -1, 1) * 0.5 + 0.5,
+      });
+      break;
+    }
 
     // ---- paddles ---------------------------------------------------------
     for (const c of crafts) {
@@ -113,7 +159,9 @@ export function stepOrb(o, dt, ctx) {
       if (p.goal >= 0) {
         const lateral = o.x * -p.nz + o.z * p.nx;
         const craft = crafts[p.goal];
-        if (craft.alive && Math.abs(lateral) <= p.halfWidth) {
+        // A raised fence makes the goal unscoreable; the orb falls through to
+        // the reflect path below and rebounds off the back wall instead.
+        if (craft.alive && craft.arcActive <= 0 && Math.abs(lateral) <= p.halfWidth) {
           // Retire it here, not in the event handler: orb-vs-orb runs
           // between the two and would otherwise clash against a scored orb.
           o.active = false;

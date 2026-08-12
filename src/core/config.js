@@ -92,6 +92,27 @@ export const PADDLE = {
   hover: 0.16,        // bob amplitude
 };
 
+/**
+ * The ARC — a lightning fence that unzips from both ends of your craft and
+ * seals your whole goal line for a few seconds. Nothing gets past it.
+ *
+ * Deliberately expensive: at a 15s cooldown and 2.6s of uptime it is about 17%
+ * coverage, so it rescues a moment you'd otherwise lose rather than replacing
+ * the act of defending. Every pilot gets one, including the AI — an ability
+ * only the human has would quietly rewrite the difficulty curve, and it would
+ * be invisible to the seat-symmetry harness.
+ */
+export const ARC = {
+  cooldown: 15,       // seconds to recharge from empty
+  startCharge: 0.55,  // fraction charged at the opening whistle
+  duration: 2.6,      // seconds the fence stays up
+  height: 2.2,        // visual height of the fence
+  openTime: 0.18,     // seconds to unzip open (and to collapse)
+  fadeTime: 0.3,      // seconds to fade out after expiry
+  speedGain: 0.9,     // added to orb speed on a bounce
+  english: 0.34,      // how much craft motion curves the bounce
+};
+
 export const ORB = {
   radius: 0.52,
   baseSpeed: 14.5,

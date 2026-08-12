@@ -28,8 +28,31 @@ npm run preview
 | Keyboard   | `A` / `D` or arrows             | Space / Shift  | Esc / P   |
 | Gamepad    | left stick / d-pad              | A              | Start     |
 
-**Surge** is on a ~4 second cooldown. It widens your deflector and adds power to
-the next return. The deflector glows white when it's ready.
+### Abilities
+
+**Space** (tap on touch, A on a pad) spends the best ability you have charged.
+
+**SURGE** — ~4 second cooldown. Briefly widens your deflector and adds power to
+the next return. The tell is diegetic: your deflector arc glows white-hot when
+charged and drops back to team colour once spent. Note the widening is not flat
+— `effHalfLen` scales by *seconds remaining*, so it starts ~23% wider and tapers
+away over 0.55s. Collider and visual use the same expression, so it reads as a
+burst that fades.
+
+**ARC** — 15 second cooldown, 2.6 seconds of uptime. A lightning fence unzips
+from both ends of your craft and seals your entire goal line. Nothing gets
+through it; orbs bounce off, and your own motion still curves them a little, so
+you keep some steering while shielded. The HUD carries a charge meter beside
+your score — it fills while recharging, reads READY with a pulse when charged,
+and drains white while live.
+
+Space takes the ARC when it's charged and falls back to the surge otherwise.
+**Shift** is surge-only, for holding the fence back for a moment you choose.
+
+Every pilot gets both, including the AI — an ability only the human has would
+quietly rewrite the difficulty curve, and it would be invisible to the
+seat-symmetry harness. Rivals spend the fence on shots they genuinely can't
+reach, and on the point that would end their match.
 
 The two control families behave differently on release, because they mean
 different things:

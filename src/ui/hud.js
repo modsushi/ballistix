@@ -24,6 +24,9 @@ export class HUD {
       selfPips: el('selfPips'),
       announce: el('announce'),
       announceText: el('announce').querySelector('span'),
+      arcMeter: el('arcMeter'),
+      arcFill: el('arcFill'),
+      arcWord: el('arcWord'),
       combo: el('combo'),
       comboNum: el('combo').querySelector('b'),
       boot: el('boot'),
@@ -45,6 +48,8 @@ export class HUD {
     this._scores = [-1, -1, -1, -1];
     this._orbs = -1;
     this._combo = -1;
+    this._arc = -1;
+    this._arcState = '';
     this._announceTimer = null;
     this._buildPods();
     this._setControlHint();
@@ -89,8 +94,9 @@ export class HUD {
   _setControlHint() {
     const touch = matchMedia('(hover: none) and (pointer: coarse)').matches;
     this.dom.ctrlHint.innerHTML = touch
-      ? 'Slide to steer &nbsp;·&nbsp; Tap to surge'
-      : 'Move mouse or A / D to steer &nbsp;·&nbsp; Space to surge';
+      ? 'Slide to steer &nbsp;·&nbsp; Tap to fire &mdash; ARC when charged'
+      : 'Mouse or A / D to steer &nbsp;·&nbsp; Space to fire &mdash; ARC when charged'
+        + '<br/>Shift for surge only';
   }
 
   // --------------------------------------------------------------- screens --
@@ -170,6 +176,27 @@ export class HUD {
     this._replay(this.dom.combo, 'tick');
   }
 
+  /**
+   * @param {number} value  0..1 — charge while recharging, time left while live
+   * @param {boolean} ready charged and available
+   * @param {boolean} live  currently burning
+   */
+  setArc(value, ready, live) {
+    const state = live ? 'live' : ready ? 'ready' : '';
+    // The bar moves every frame while live, so only touch the DOM when the
+    // rounded value actually changes — a HUD write is a layout write.
+    const pct = Math.round(value * 100);
+    if (pct !== this._arc) {
+      this._arc = pct;
+      this.dom.arcFill.style.width = `${pct}%`;
+    }
+    if (state === this._arcState) return;
+    this._arcState = state;
+    this.dom.arcMeter.classList.toggle('ready', state === 'ready');
+    this.dom.arcMeter.classList.toggle('live', state === 'live');
+    this.dom.arcWord.textContent = live ? 'LIVE' : ready ? 'READY' : 'ARC';
+  }
+
   announce(text, hold = 1500) {
     this.dom.announceText.textContent = text;
     this.dom.announce.classList.remove('show');
@@ -197,6 +224,9 @@ export class HUD {
     }
     this.dom.combo.classList.remove('show');
     this.dom.announce.classList.remove('show');
+    this._arc = -1;
+    this._arcState = '';
+    this.setArc(0, false, false);
   }
 
   // --------------------------------------------------------------- result --

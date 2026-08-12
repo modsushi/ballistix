@@ -75,9 +75,54 @@ await page.evaluate(() => {
 await page.waitForTimeout(140);
 await shot('06-surge');
 
+// --- the ARC: ignition, sustain, a strike, expiry ---------------------------
+// Fresh match first. The sections above deliberately wreck pilot 0, and a
+// destroyed craft silently refuses every ability — `alive` on the Craft is a
+// separate thing from the game's roster array, so poking the roster leaves a
+// wreck that looks fine in the state dump and does nothing.
+await page.evaluate(() => {
+  const a = window.__ballistix;
+  a.inMatch = true;
+  document.getElementById('result').classList.add('hidden');
+  a.game.startMatch(a.difficulty);
+});
+await page.waitForTimeout(4600);        // intro sweep, then the first serve
+
+const fired = await page.evaluate(() => {
+  const g = window.__ballistix.game;
+  const c = g.crafts[0];
+  c.alive = true; c.dying = 0; c.root.visible = true;
+  g.alive[0] = true; g.scores[0] = 5; g.hud.setScore(0, 5);
+  c.arc = 1; c.arcActive = 0; c.u = -3;
+  return c.tryArc();
+});
+if (!fired) console.log('WARNING: tryArc() refused — the arc captures below are meaningless');
+await page.waitForTimeout(90);
+await shot('07-arc-igniting');       // mid-unzip
+await page.waitForTimeout(400);
+await shot('08-arc-up');
+
+// Drive an orb into the fence.
+await page.evaluate(() => {
+  const g = window.__ballistix.game;
+  const o = g.orbs.find((x) => x.active) || g.orbs[0];
+  o.active = true; o.setVisible(true);
+  o.x = 1; o.z = 6; o.vx = 2; o.vz = 26; o.speed = 26;
+});
+await page.waitForTimeout(230);
+await shot('09-arc-strike');
+await page.waitForTimeout(1400);
+await shot('10-arc-sustain');
+await page.waitForTimeout(1400);
+await shot('11-arc-gone');
+
 const state = await page.evaluate(() => {
   const g = window.__ballistix.game;
-  return { state: g.state, scores: g.scores, alive: g.alive, timeScale: +g.timeScale.toFixed(2) };
+  return { state: g.state, scores: g.scores, alive: g.alive,
+           timeScale: +g.timeScale.toFixed(2),
+           craftAlive: g.crafts.map((c) => c.alive),
+           arc: +g.crafts[0].arc.toFixed(2),
+           arcActive: +g.crafts[0].arcActive.toFixed(2) };
 });
 console.log(JSON.stringify(state));
 console.log(errs.length ? errs.join('\n') : '(clean)');
