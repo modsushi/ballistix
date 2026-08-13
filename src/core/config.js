@@ -298,7 +298,14 @@ export const BRICKS = {
  * a feature you can play around.
  */
 export const PINBALL = {
-  enabled: true,
+  /**
+    * Master switch, currently **off**. The well is built, tuned and tested —
+    * including the roaming single-site behaviour below — but the deck is being
+    * played without it. With this false nothing is constructed, nothing is
+    * added to the scene, no collision runs and the HUD readout is hidden; flip
+    * it to bring the well back exactly as described.
+    */
+  enabled: false,
 
   /**
     * **One well at a time**, and never for long.

@@ -14,8 +14,9 @@ well as lost, and there is finally a reason to aim rather than just to survive.
 Every so often a **singularity** tears open somewhere on the deck. While it is
 there, orbs that pass inside its reach stop travelling in straight lines.
 
-And a **chaos well** — pop bumpers and a slingshot — surfaces in one corner of
-the deck at a time, runs for a quarter of a minute, and reopens somewhere else.
+There is also a **chaos well** — pop bumpers and a slingshot that surface in one
+corner of the deck at a time — built, tuned and tested but currently switched
+off behind `PINBALL.enabled`.
 
 Built with three.js. Targets mobile web first: one WebGL2 context, no audio
 files, and a render pipeline that scales itself down rather than dropping
@@ -223,28 +224,24 @@ opening on top of a standing block, and the boundary of the pull is drawn on the
 deck as a dashed contracting ring, so the reach is something you can play around
 rather than something that happens to you.
 
-Visually there is no screen-space distortion — real lensing would mean another
-full-screen pass in a chain that already has twelve, for something on screen
-eleven seconds a minute. The illusion is assembled instead from five parts:
+Visually it is four layers and no screen-space distortion — real lensing would
+mean another full-screen pass in a chain that already has twelve, for something
+on screen eleven seconds a minute. A genuinely black core that occludes what is
+behind it, a hard fresnel photon ring on its limb, an accretion disc of
+spiralling noise whose inner edge laps its outer one, and the boundary ring.
 
-- a genuinely black core that occludes what is behind it, with a hard fresnel
-  photon ring on its limb
-- an accretion disc of spiralling noise whose inner edge laps its outer one,
-  with **relativistic beaming**: the side rotating toward the camera is far
-  brighter and blue-shifted, the receding side dim and red. One sine, and it is
-  the single asymmetry that stops a disc reading as a spinning washer
-- a camera-facing **lensing halo** standing off the core — a thin photon ring
-  plus a softer arc brightest across the top, standing in for the far side of
-  the disc being lifted over the hole by its own gravity. Because it is
-  billboarded it reads from a top-down phone camera as well as a low desktop one
-- the **deck itself bending**: the floor's hex lattice is sampled at a position
-  pulled toward the hole, so the grid warps into it, and the deck goes dark
-  underneath because light does not leave. Only the lattice is warped —
-  territory washes and shock rings keep their true positions, since those carry
-  information the player reads positionally and bending them would be lying
-- the dashed boundary ring at the exact radius of the pull
+> A later pass added relativistic beaming to the disc, a billboarded lensing
+> halo, and a warp that bent the deck's hex lattice into the hole. All three
+> were reverted: individually plausible, together they buried the clean silhouette
+> that made the thing read at a glance. The restrained version is the one that
+> ships.
 
-### The chaos well
+### The chaos well (currently switched off)
+
+Everything below is implemented and tested but disabled behind
+`PINBALL.enabled`. With the flag false nothing is constructed, nothing is added
+to the scene, no collision runs and the HUD readout is hidden — off means off,
+not a disabled copy sitting in the frame. Flip it to bring the well back.
 
 There are four well *sites*, one per quadrant on the diagonals between the
 goals, and **exactly one is ever open**. A well is two pop bumpers with a
@@ -370,7 +367,7 @@ twice — an opaque PBR shell and an additive rim shell — with damage, hit fla
 and team tint carried on per-instance attributes and resolved in the shader.
 Chipping a block therefore costs one float, not a geometry rebuild, and the
 whole field adds two draw calls and about 4k triangles to the frame. The
-chaos well is three more instanced meshes on top, whichever site is open.
+chaos well, when enabled, is three more instanced meshes on top.
 
 **Things arrive by rising out of the deck rather than fading in.** A block
 surfacing, and a pinball well deploying, are both a translation from below a

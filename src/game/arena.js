@@ -365,8 +365,6 @@ export class Arena {
 
   shock(x, z, strength, color) { this.floor.addWave(x, z, strength, color); }
   setCharge(v) { this.floor.setCharge(v); }
-  /** Bend and darken the deck around an open singularity. */
-  setHole(x, z, strength) { this.floor.setHole(x, z, strength); }
 
   /** Keep the fill light behind the camera, aimed at the deck. */
   aimFill(camPos) {

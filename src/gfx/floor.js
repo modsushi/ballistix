@@ -28,7 +28,6 @@ uniform vec4  uTerrState;                // per-pilot health 0..1, packed xyzw
 uniform float uRadius;
 uniform float uDetail;
 uniform float uCharge;                   // 0..1 pre-serve build-up
-uniform vec3  uHole;                     // xy = singularity, z = strength
 
 float hexDist(vec2 p) {
   p = abs(p);
@@ -57,26 +56,11 @@ const BODY = /* glsl */`
   float dist = length(P);
   float rn = dist / uRadius;
 
-  // ---- gravitational warp -------------------------------------------------
-  // The lattice is sampled at a *pulled* position near an open singularity, so
-  // the deck's own grid bends into it. Only the lattice is warped — territory
-  // washes, shock rings and the rim keep their true positions, because those
-  // carry information the player reads positionally and bending them would be
-  // lying rather than styling.
-  vec2 Pw = P;
-  float hole = 0.0;
-  if (uHole.z > 0.001) {
-    vec2 hv = P - uHole.xy;
-    float hd = length(hv);
-    hole = uHole.z * exp(-hd * hd * 0.022);
-    Pw -= (hv / max(hd, 0.001)) * hole * 3.6;
-  }
-
   // ---- hex lattice -------------------------------------------------------
-  vec3 hg = hexGrid(Pw * 0.62);
+  vec3 hg = hexGrid(P * 0.62);
   float edge = smoothstep(0.045, 0.006, hg.x);
   float cellRand = hash21(hg.yz);
-  vec3 hgFine = hexGrid(Pw * 2.35);
+  vec3 hgFine = hexGrid(P * 2.35);
   float fine = smoothstep(0.035, 0.004, hgFine.x);
 
   // A slow wave of illumination crawling outward keeps the deck breathing.
@@ -137,16 +121,6 @@ const BODY = /* glsl */`
   // Radial vignette so the middle of the deck stays readable under the orbs.
   energy *= mix(1.0, 0.62, smoothstep(0.0, 0.55, rn));
 
-  // Light does not leave the immediate neighbourhood of a singularity. The
-  // deck going dark under it is what makes the warp read as gravity rather
-  // than as a lens filter, and it frames the accretion disc against black.
-  if (hole > 0.001) {
-    energy *= 1.0 - clamp(hole * 1.55, 0.0, 0.94);
-    // A thin violet crest right where the pull becomes obvious.
-    energy += vec3(0.42, 0.20, 0.72) * smoothstep(0.16, 0.34, hole)
-                                     * smoothstep(0.62, 0.36, hole) * 0.5;
-  }
-
   totalEmissiveRadiance += energy * uDetail;
 `;
 
@@ -170,7 +144,6 @@ export function createEnergyFloor(shapePoints, preset, players) {
     uRadius: { value: ARENA.half },
     uDetail: { value: preset.floorDetail },
     uCharge: { value: 0 },
-    uHole: { value: new THREE.Vector3(0, 0, 0) },
   };
 
   const mat = new THREE.MeshStandardMaterial({
@@ -242,9 +215,6 @@ export function createEnergyFloor(shapePoints, preset, players) {
     },
 
     setCharge(v) { uniforms.uCharge.value = v; },
-
-    /** Where the singularity is and how hard it is pulling. 0 = none. */
-    setHole(x, z, strength) { uniforms.uHole.value.set(x, z, strength); },
 
     update(dt, t) {
       uniforms.uTime.value = t;

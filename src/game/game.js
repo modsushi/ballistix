@@ -714,8 +714,6 @@ export class Game {
       }
       if (h.justClosed) this.effects.blackHoleClose(h);
       if (h.live) this.effects.blackHoleAmbient(h, dt);
-      // The deck itself bends and goes dark around it.
-      this.arena.setHole(h.x, h.z, h.strength);
       this.hud.setBlackHole(h.cycle01, h.live);
     }
 
