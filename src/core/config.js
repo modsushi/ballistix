@@ -56,6 +56,24 @@ export const RULES = {
     */
   maxPoints: 7,
   /**
+    * Salvage only pays out while at least this many pilots are alive. In the
+    * final duel the deck stops handing points back.
+    *
+    * Every softer lever was tried first — a longer bank, a lower ceiling, a
+    * field that thins as pilots die — and all of them only moved where the
+    * equilibrium sat rather than removing it. Two competent pilots defending
+    * two walls concede rarely enough that *any* steady income cancels the
+    * drain, and `playtest.mjs` kept producing matches that sat at [6,4,0,0]
+    * for ninety seconds with both survivors banking points as fast as they
+    * dropped them.
+    *
+    * Closing the faucet outright makes points strictly monotonic in the
+    * endgame, so a match can always end. It also reads as a rule rather than
+    * as a tuning fudge: the middle game is the four-player escalation, and the
+    * last two pilots settle it the way the game always did — on defence alone.
+    */
+  salvageMinPilots: 3,
+  /**
     * Orb count over elapsed play time. Paced so a rally has room to develop
     * before the next orb lands — arriving too fast turns the deck from a duel
     * into noise, and the player has three walls' worth of rebounds to read.
@@ -280,32 +298,31 @@ export const BRICKS = {
  * a feature you can play around.
  */
 export const PINBALL = {
-  /**
-    * Master switch, currently **off**. The wells are built, tuned and tested,
-    * but the deck is being played without them for now so the brick field can
-    * be judged on its own. With this false nothing is constructed, nothing is
-    * added to the scene and no collision runs; flip it to bring them back.
-    */
-  enabled: false,
+  enabled: true,
 
   /**
-    * The wells are not permanent furniture — they surface, run, and sink
-    * again. Fifteen seconds up, fifteen down, forever, starting *down* so the
+    * **One well at a time**, and never for long.
+    *
+    * There are four sites, one per quadrant on the diagonals, but only ever one
+    * is up: it surfaces at a site, runs for fourteen seconds, sinks, and thirty
+    * seconds later the *next* site along opens instead. Starts down, so the
     * opening exchange is played on a clean deck.
     *
-    * A cycle rather than a fixture because a permanent pinball well is a
-    * permanent tax on one region of the deck: you learn where it is and simply
-    * never send an orb there. Something that comes and goes has to be replanned
-    * around every thirty seconds, and it gives the match a rhythm — a tense
-    * half where the middle is dangerous, and a calm half where it is not.
+    * A cycle rather than a fixture because a permanent well is a permanent tax
+    * on one region of the deck — you learn where it is and simply stop sending
+    * orbs there. Something that appears somewhere new every three-quarters of a
+    * minute has to be replanned around each time, and it gives the match a
+    * rhythm: a tense stretch where one corner is dangerous, then a calm one.
     *
-    * All four wells move together, which keeps the deck symmetric at every
-    * instant; one live well would quietly tax whichever pilot it sat in front
-    * of, and `tools/balance.mjs` would read that as rule bias.
+    * Stepping the site each deployment is also what keeps it fair. A single
+    * live well obviously cannot be four-fold symmetric the way the brick field
+    * is, so instead every seat gets the same exposure over a match and no
+    * pilot ever gets it twice running — the same treatment the singularity
+    * gets, for the same reason.
     */
-  upTime: 15,         // seconds deployed
-  downTime: 15,       // seconds retracted before the next deployment
-  warnTime: 1.1,      // telegraph before they punch up through the deck
+  upTime: 14,         // seconds deployed
+  downTime: 30,       // seconds retracted before the next site opens
+  warnTime: 1.1,      // telegraph before it punches up through the deck
   riseTime: 0.55,     // seconds to travel up or down
 
   wellR: 10.4,        // distance from centre to the bumper pair

@@ -4,23 +4,24 @@ import { bumperBody, slingWedge } from '../gfx/shapes.js';
 import { clamp, rand } from '../core/math.js';
 
 /**
- * Pinball furniture: four chaos wells, one per quadrant, sitting on the
- * diagonals between the goals.
+ * Pinball furniture: four chaos well *sites*, one per quadrant on the diagonals
+ * between the goals — of which exactly one is ever open.
  *
  * A well is two pop bumpers with a slingshot standing behind them. An orb that
  * wanders in bounces between the bumpers picking up speed, and the slingshot
  * eventually fires it back across the deck at a fixed, unmistakably violent
  * speed. The result is a small region of the deck where the ball's behaviour
- * stops being predictable — which is the point, and why there are only four of
- * them and why none sits on a goal axis. A well in front of someone's wall
- * would be a random goal generator rather than a feature you can play around.
+ * stops being predictable — which is the point, and why none of the sites sits
+ * on a goal axis. A well in front of someone's wall would be a random goal
+ * generator rather than a feature you can play around.
+ *
+ * It surfaces, runs, sinks, and reopens at the *next* site along, so the
+ * dangerous corner keeps moving. See `PINBALL` in config for the cycle and for
+ * why stepping the site is what keeps a single live well fair.
  *
  * These are speed *sources*, so `ORB.bleed` exists to drain them; see the note
  * there. Without it a single well visit would permanently pin an orb at top
  * speed.
- *
- * Placement is four-fold rotationally symmetric for the same reason the brick
- * field is: `tools/balance.mjs` reads seat win rates as a fairness signal.
  */
 
 /** Hazard amber — deliberately not one of the four team colours. */
@@ -32,6 +33,12 @@ const DOWN = 0, RISING = 1, UP = 2, FALLING = 3;
 /** How far below the deck the elements park. The deck is opaque, so this only
  *  has to clear the tallest of them to hide the lot. */
 const RETRACT_DEPTH = 2.0;
+
+const _m = new THREE.Matrix4();
+const _q = new THREE.Quaternion();
+const _p = new THREE.Vector3();
+const _s = new THREE.Vector3(1, 1, 1);
+const _UP = new THREE.Vector3(0, 1, 0);
 
 export class Pinball {
   constructor(scene, preset) {
@@ -232,34 +239,10 @@ export class Pinball {
     return a;
   }
 
-  /** Elements never move, so instance matrices are written exactly once. */
+  /** Seed the per-instance shader state. Transforms are written by `_applyLift`. */
   _placeInstances() {
-    const m = new THREE.Matrix4();
-    const q = new THREE.Quaternion();
-    const p = new THREE.Vector3();
-    const s = new THREE.Vector3(1, 1, 1);
-    const up = new THREE.Vector3(0, 1, 0);
-
-    this.bumpers.forEach((b, i) => {
-      p.set(b.x, ARENA.floorY, b.z);
-      q.setFromAxisAngle(up, b.seed * Math.PI);
-      m.compose(p, q, s);
-      this.body.setMatrixAt(i, m);
-      this.crown.setMatrixAt(i, m);
-      this.bumperState[i * 2 + 1] = b.seed;
-    });
-    this.slings.forEach((sl, i) => {
-      p.set(sl.x, ARENA.floorY, sl.z);
-      // The wedge's face looks down local -Z; aim that along the element normal.
-      q.setFromAxisAngle(up, Math.atan2(-sl.nx, -sl.nz));
-      m.compose(p, q, s);
-      this.sling.setMatrixAt(i, m);
-      this.slingState[i * 2 + 1] = sl.seed;
-    });
-
-    this.body.instanceMatrix.needsUpdate = true;
-    this.crown.instanceMatrix.needsUpdate = true;
-    this.sling.instanceMatrix.needsUpdate = true;
+    this.bumpers.forEach((b, i) => { this.bumperState[i * 2 + 1] = b.seed; });
+    this.slings.forEach((sl, i) => { this.slingState[i * 2 + 1] = sl.seed; });
   }
 
   reset() {
@@ -268,6 +251,7 @@ export class Pinball {
     this.phase = DOWN;
     this.timer = PINBALL.downTime;
     this.lift = -RETRACT_DEPTH;
+    this.well = Math.floor(Math.random() * 4);   // which site opens first
     this._warned = false;
     this.justDeployed = false;
     this.justRetracted = false;
@@ -277,6 +261,10 @@ export class Pinball {
 
   /** True only while the elements are fully up and live. */
   get live() { return this.phase === UP; }
+
+  /** The elements of the site that is currently open, for effects. */
+  activeBumpers() { return this.bumpers.filter((b) => b.well === this.well); }
+  activeSlings() { return this.slings.filter((s) => s.well === this.well); }
 
   /**
    * Where the furniture is in its cycle, as a 0..1 bar for the HUD: filling
@@ -288,14 +276,46 @@ export class Pinball {
     return this.phase === RISING ? 1 : 0;
   }
 
-  /** Slide every element between its parked depth and the deck. */
+  /**
+   * Slide the open site between its parked depth and the deck.
+   *
+   * Only one site is ever above the floor, so the instance matrices carry the
+   * lift for the active well and collapse the other three to zero scale. It is
+   * twelve matrix writes on a frame where the lift actually changed and none at
+   * all otherwise — cheaper than three extra draw calls' worth of separate
+   * meshes, and it keeps the whole thing at three draw calls regardless of
+   * which site is open.
+   */
   _applyLift() {
     const y = this.lift;
     const hidden = y <= -RETRACT_DEPTH + 1e-3;
     for (const m of [this.body, this.crown, this.sling]) {
-      m.position.y = y;
+      m.position.y = 0;
       m.visible = !hidden;
     }
+    if (hidden) return;
+
+    const m = _m, q = _q, p = _p, s = _s;
+    this.bumpers.forEach((b, i) => {
+      const on = b.well === this.well;
+      p.set(b.x, ARENA.floorY + y, b.z);
+      q.setFromAxisAngle(_UP, b.seed * Math.PI);
+      s.setScalar(on ? 1 : 0);
+      m.compose(p, q, s);
+      this.body.setMatrixAt(i, m);
+      this.crown.setMatrixAt(i, m);
+    });
+    this.slings.forEach((sl, i) => {
+      const on = sl.well === this.well;
+      p.set(sl.x, ARENA.floorY + y, sl.z);
+      q.setFromAxisAngle(_UP, Math.atan2(-sl.nx, -sl.nz));
+      s.setScalar(on ? 1 : 0);
+      m.compose(p, q, s);
+      this.sling.setMatrixAt(i, m);
+    });
+    this.body.instanceMatrix.needsUpdate = true;
+    this.crown.instanceMatrix.needsUpdate = true;
+    this.sling.instanceMatrix.needsUpdate = true;
   }
 
   /**
@@ -317,6 +337,9 @@ export class Pinball {
         // to tell you something is coming before it punches through it.
         if (this.timer <= PINBALL.warnTime && !this._warned) {
           this._warned = true;
+          // Step to the next site *before* the telegraph, so the ring that
+          // warns you is the ring at the place it is actually about to open.
+          this.well = (this.well + 1) % 4;
           this.justWarned = true;
         }
         if (this.timer <= 0) {
@@ -363,7 +386,7 @@ export class Pinball {
 
     // ---- pop bumpers -------------------------------------------------------
     for (const b of this.bumpers) {
-      if (b.cool > 0) continue;
+      if (b.well !== this.well || b.cool > 0) continue;
       const dx = o.x - b.x, dz = o.z - b.z;
       const R = b.r + R0;
       const d2 = dx * dx + dz * dz;
@@ -410,6 +433,7 @@ export class Pinball {
     // through what is plainly a solid wedge — the collider has to be the whole
     // object, with the kick reserved for the front of it.
     for (const s of this.slings) {
+      if (s.well !== this.well) continue;
       const rx = o.x - s.x, rz = o.z - s.z;
       const ln = rx * s.nx + rz * s.nz;         // + is out in front of the face
       const lt = rx * s.tx + rz * s.tz;         // along it

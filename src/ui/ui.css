@@ -496,6 +496,8 @@ body::after {
   color: var(--ink-faint);
   min-width: 4.2em;
 }
+.salv-meter.closed { opacity: 0.42; }
+.salv-meter.closed .salv-icon { stroke: var(--ink-faint); }
 .salv-meter.paid .salv-icon { opacity: 1; }
 .salv-meter.paid { animation: salvPaid 0.6s var(--ease-out); }
 @keyframes salvPaid {

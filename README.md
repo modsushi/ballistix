@@ -14,9 +14,8 @@ well as lost, and there is finally a reason to aim rather than just to survive.
 Every so often a **singularity** tears open somewhere on the deck. While it is
 there, orbs that pass inside its reach stop travelling in straight lines.
 
-There is also a set of **pinball wells** — pop bumpers and slingshots that
-surface on a timer — built, tuned and tested but currently switched off behind
-`PINBALL.enabled`, so the brick field can be judged on its own.
+And a **chaos well** — pop bumpers and a slingshot — surfaces in one corner of
+the deck at a time, runs for a quarter of a minute, and reopens somewhere else.
 
 Built with three.js. Targets mobile web first: one WebGL2 context, no audio
 files, and a render pipeline that scales itself down rather than dropping
@@ -145,14 +144,10 @@ an orb through. A block whose regen timer expires while the field is full simply
 waits for a slot.
 
 It also **shrinks with the field of play**: two blocks per surviving pilot, so
-four survivors get eight and two get four. That is the endgame valve. Goals get
-rarer as pilots are eliminated — two survivors defending two walls concede far
-less often than four defending four — while a fixed field would keep paying
-salvage out at the same rate. At a flat ceiling `playtest.mjs` produced a match
-that sat at [6,3,0,0] for ninety-five seconds, both survivors banking points as
-fast as they dropped them. Thinning the field exactly when the drain thins keeps
-the two moving together, and it reads as the deck running out of material rather
-than as a rule.
+four survivors get eight and two get four. Goals get rarer as pilots are
+eliminated — two survivors defending two walls concede far less often than four
+defending four — while a fixed field would keep paying salvage out at the same
+rate, and it reads as the deck running out of material rather than as a rule.
 
 They arrive **one at a time**, in an order that walks the quadrants: block 0 of
 each quadrant, then block 1, and so on. Since the layout is four-fold symmetric,
@@ -182,6 +177,21 @@ gone — under sustained fire it sits well below its own ceiling.
 > capped one arriving a block at a time, which cut income far more than any
 > ratio did. The points ceiling exists for the same reason: it stops a pilot
 > farming an unloseable lead.
+
+**Salvage closes for the final duel.** Once only two pilots are left the deck
+stops paying out entirely — blocks still break, still slow orbs down and still
+light up, but the ledger shuts and the HUD meter reads CLOSED.
+
+That is a rule rather than a tuning number because every softer lever failed.
+A longer bank, a lower ceiling, a field that thins as pilots die: each one only
+moved where the equilibrium sat instead of removing it. Two competent pilots
+defending two walls concede rarely enough that *any* steady income cancels the
+drain, and `playtest.mjs` kept producing matches that sat at [6,4,0,0] for
+ninety seconds with both survivors banking points as fast as they dropped them.
+Closing the faucet makes points strictly monotonic in the endgame, so a match
+can always end — and it reads well: the middle game is the four-player
+escalation, and the last two settle it the way the game always did, on defence
+alone.
 
 ### The singularity
 
@@ -213,42 +223,61 @@ opening on top of a standing block, and the boundary of the pull is drawn on the
 deck as a dashed contracting ring, so the reach is something you can play around
 rather than something that happens to you.
 
-Visually it is four layers and no screen-space distortion — real lensing would
-mean another full-screen pass in a chain that already has twelve, for something
-on screen eleven seconds a minute. A genuinely black core that occludes what is
-behind it, a hard fresnel photon ring on its limb, an accretion disc of
-spiralling noise whose inner edge laps its outer one, and the boundary ring.
+Visually there is no screen-space distortion — real lensing would mean another
+full-screen pass in a chain that already has twelve, for something on screen
+eleven seconds a minute. The illusion is assembled instead from five parts:
 
-### Pinball (currently switched off)
+- a genuinely black core that occludes what is behind it, with a hard fresnel
+  photon ring on its limb
+- an accretion disc of spiralling noise whose inner edge laps its outer one,
+  with **relativistic beaming**: the side rotating toward the camera is far
+  brighter and blue-shifted, the receding side dim and red. One sine, and it is
+  the single asymmetry that stops a disc reading as a spinning washer
+- a camera-facing **lensing halo** standing off the core — a thin photon ring
+  plus a softer arc brightest across the top, standing in for the far side of
+  the disc being lifted over the hole by its own gravity. Because it is
+  billboarded it reads from a top-down phone camera as well as a low desktop one
+- the **deck itself bending**: the floor's hex lattice is sampled at a position
+  pulled toward the hole, so the grid warps into it, and the deck goes dark
+  underneath because light does not leave. Only the lattice is warped —
+  territory washes and shock rings keep their true positions, since those carry
+  information the player reads positionally and bending them would be lying
+- the dashed boundary ring at the exact radius of the pull
 
-Everything below is implemented and tested but disabled behind
-`PINBALL.enabled`. With the flag false nothing is constructed, nothing is added
-to the scene, no collision runs and the HUD readout is hidden — off means off,
-not a disabled copy sitting in the frame. Flip it to bring the wells back.
+### The chaos well
 
-Four chaos wells sit on the diagonals between the goals. Each is two pop
-bumpers with a slingshot standing behind them. An orb that wanders in rattles
-between the bumpers gaining speed until the slingshot fires it back across the
-deck at a flat 25.5 units/sec.
+There are four well *sites*, one per quadrant on the diagonals between the
+goals, and **exactly one is ever open**. A well is two pop bumpers with a
+slingshot standing behind them: an orb that wanders in rattles between the
+bumpers gaining speed until the slingshot fires it back across the deck at a
+flat 25.5 units/sec.
 
-They are **not permanent furniture**. They surface for fifteen seconds, sink,
-and stay down for fifteen more, forever, starting down. A well that is always
-there is a permanent tax on one region of the deck — you learn where it is and
-simply stop sending orbs that way. Something that comes and goes has to be
-replanned around every thirty seconds, and it gives the match a rhythm: a tense
-half where the middle is dangerous and a calm half where it is not. A ring
-contracting on the deck telegraphs the arrival about a second out, and the HUD
-carries the cycle as a bar next to the orb count — filling while they are down,
-draining while they are live.
+It surfaces at a site, runs for fourteen seconds, sinks, and thirty seconds
+later opens at the *next* site along. Starting down, so the opening exchange is
+played on a clean deck.
 
-All four move together. One live well would quietly tax whichever pilot it sat
-in front of, and the fairness harness would read that as rule bias.
+A cycle rather than a fixture because a permanent well is a permanent tax on one
+region of the deck — you learn where it is and simply stop sending orbs there.
+Something that appears somewhere new every three-quarters of a minute has to be
+replanned around each time, and it gives the match a rhythm: a tense stretch
+where one corner is lethal, then a calm one. A ring contracting on the deck
+telegraphs the arrival about a second out, and the HUD carries the cycle as a
+bar next to the orb count — filling while it is away, draining while it is live.
 
-They are on the diagonals for the same reason. A well in front of somebody's
-wall is a random goal generator; a well in the neutral corner is a feature you
-can aim into, avoid, or use to buy yourself time.
+Stepping the site is also what keeps it fair. One live well obviously cannot be
+four-fold symmetric the way the brick field is, so instead every seat gets the
+same exposure over a match and nobody gets it twice running — the same treatment
+the singularity gets, for the same reason.
 
-Because they are speed *sources*, orbs above 19 units/sec now bleed speed at
+The sites are on the diagonals rather than the goal axes. A well in front of
+somebody's wall is a random goal generator; a well in a neutral corner is a
+feature you can aim into, avoid, or use to buy yourself time.
+
+Only one site being up is free at the draw-call level: all twelve elements stay
+in three instanced meshes, and the three dormant sites are collapsed to zero
+scale in their instance matrices rather than being separate objects to toggle.
+
+Because bumpers are speed *sources*, orbs above 19 units/sec bleed speed at
 2.4 units/sec² until they settle back down. Without that sink the first orb to
 find a well pins itself at the speed cap and stays there for the rest of the
 match, which is precisely the game this rework is trying to get away from.
@@ -341,7 +370,7 @@ twice — an opaque PBR shell and an additive rim shell — with damage, hit fla
 and team tint carried on per-instance attributes and resolved in the shader.
 Chipping a block therefore costs one float, not a geometry rebuild, and the
 whole field adds two draw calls and about 4k triangles to the frame. The
-pinball furniture, when enabled, is three more instanced meshes on top.
+chaos well is three more instanced meshes on top, whichever site is open.
 
 **Things arrive by rising out of the deck rather than fading in.** A block
 surfacing, and a pinball well deploying, are both a translation from below a
@@ -417,10 +446,10 @@ Measured in-browser via `window.__ballistix.stats`:
 
 | | |
 | --- | --- |
-| Scene draw calls | ~88 |
+| Scene draw calls | ~89 |
 | Triangles | ~81k |
 | Post passes | 12 |
-| Shader programs | ~53 |
+| Shader programs | ~57 |
 | Textures | 13 |
 
 The brick field costs two of those draw calls and about 4k triangles, which is

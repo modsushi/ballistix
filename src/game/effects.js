@@ -550,19 +550,19 @@ export class Effects {
 
   // -------------------------------------------------------------- pinball --
 
-  /** The telegraph, a beat before the wells punch up through the deck. */
+  /** The telegraph, a beat before the well punches up through the deck. */
   pinballWarn(pin) {
-    for (const b of pin.bumpers) {
+    for (const b of pin.activeBumpers()) {
       this.rings.spawn(b.x, ARENA.playY - 0.86, b.z, 2.6, 0.4, PIN_WARN, ELEMENT_COLOR);
       this.arena.shock(b.x, b.z, 0.45, ELEMENT_COLOR);
     }
     this.audio.pinballWarn();
   }
 
-  /** The wells arriving. */
+  /** The well arriving. */
   pinballDeploy(pin) {
     const n = this.preset.sparks;
-    for (const b of pin.bumpers) {
+    for (const b of pin.activeBumpers()) {
       this.sparks.burst({
         at: [b.x, ARENA.floorY + 0.1, b.z],
         dir: [0, 1, 0], spread: 0.55,
@@ -574,7 +574,7 @@ export class Effects {
       this.rings.spawn(b.x, ARENA.playY - 0.85, b.z, 0.3, 4.6, 0.55, ELEMENT_COLOR);
       this.arena.shock(b.x, b.z, 0.9, ELEMENT_COLOR);
     }
-    for (const s of pin.slings) this.arena.shock(s.x, s.z, 0.7, ELEMENT_COLOR);
+    for (const s of pin.activeSlings()) this.arena.shock(s.x, s.z, 0.7, ELEMENT_COLOR);
     this.flash = 0.18;
     this.flashColor.set(0xffd9a0).convertSRGBToLinear();
     this.audio.pinballDeploy();
@@ -582,9 +582,9 @@ export class Effects {
     this.cam.punch(2.2);
   }
 
-  /** The wells sinking back under the deck. */
+  /** The well sinking back under the deck. */
   pinballRetract(pin) {
-    for (const b of pin.bumpers) {
+    for (const b of pin.activeBumpers()) {
       this.rings.spawn(b.x, ARENA.playY - 0.85, b.z, 3.2, 0.3, 0.45, ELEMENT_COLOR);
       this.arena.shock(b.x, b.z, 0.4, ELEMENT_COLOR);
     }

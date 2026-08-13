@@ -384,6 +384,8 @@ export class Game {
    * point per brick would inflate faster than conceding could deflate. The
    * match would then never be able to end, which is a worse failure than the
    * mechanic being slightly less generous than it first sounds.
+   *
+   * And it closes entirely for the final duel; see `RULES.salvageMinPilots`.
    */
   _brickBreak(e) {
     this.effects.brickBreak(e);
@@ -392,6 +394,14 @@ export class Game {
     if (by < 0 || !this.alive[by]) return;
     if (by === 0) this.stats.bricks++;
     if (this.attract) return;              // demo shows the spectacle, not the ledger
+
+    // The deck stops paying out for the final duel — see RULES.salvageMinPilots.
+    // Blocks still break, still slow orbs down and still light up; only the
+    // ledger closes.
+    if (this.aliveCount < RULES.salvageMinPilots) {
+      if (by === 0) this.hud.setSalvageClosed(true);
+      return;
+    }
 
     this.salvage[by]++;
     if (by === 0) this.hud.setSalvage(this.salvage[0], BRICKS.perPoint);
@@ -485,7 +495,18 @@ export class Game {
     this.state = State.KO;
     this.koTimer = 1.9;
     this._slow(0.25, 0.7);
-    this._say(index === 0 ? 'YOU ARE OUT' : `${PLAYERS[index].name} DOWN`, 1700);
+
+    // Going down to two closes the ledger. Folded into the elimination
+    // announcement rather than following it, because a second `_say` would
+    // simply overwrite the first before anyone had read it — and a rule that
+    // changes mid-match without being announced looks like the game breaking.
+    const down = index === 0 ? 'YOU ARE OUT' : `${PLAYERS[index].name} DOWN`;
+    if (remaining < RULES.salvageMinPilots) {
+      this.hud.setSalvageClosed(true);
+      this._say(`${down}\nSALVAGE CLOSED`, 2000);
+    } else {
+      this._say(down, 1700);
+    }
 
     // Everything currently in flight is cleared; the deck resets around the
     // survivors rather than continuing mid-rally against a corpse.
@@ -693,6 +714,8 @@ export class Game {
       }
       if (h.justClosed) this.effects.blackHoleClose(h);
       if (h.live) this.effects.blackHoleAmbient(h, dt);
+      // The deck itself bends and goes dark around it.
+      this.arena.setHole(h.x, h.z, h.strength);
       this.hud.setBlackHole(h.cycle01, h.live);
     }
 

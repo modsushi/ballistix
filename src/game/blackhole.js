@@ -113,26 +113,88 @@ export class BlackHole {
 
           // Differential rotation — the inner edge laps the outer one, which is
           // what makes it read as falling in rather than as a spinning decal.
+          // All of the motion is in here rather than on the mesh transform, so
+          // that the beaming below can stay fixed in world space.
           float swirl = a * 2.0 + r * 3.4 - uTime * (5.2 - rn * 3.0);
           float streak = 0.5 + 0.5 * sin(swirl);
           float turb = hNoise(vec2(swirl * 1.6, r * 5.0 - uTime * 1.4));
-          float body = mix(streak, turb, 0.45);
+          float fine = hNoise(vec2(swirl * 4.2, r * 11.0 + uTime * 2.2));
+          float body = mix(streak, turb, 0.45) * (0.72 + fine * 0.42);
 
           // Hot and tight at the inner edge, cool and thin at the rim.
           float fall = smoothstep(1.0, 0.15, rn) * smoothstep(0.0, 0.10, rn);
-          float inten = fall * (0.35 + body * 0.85);
+
+          // Relativistic beaming: the side of the disc rotating toward the
+          // camera is far brighter than the side rotating away. It is the one
+          // asymmetry that stops an accretion disc reading as a spinning
+          // washer, and it costs a single sine.
+          float dop = 0.32 + 0.68 * pow(0.5 + 0.5 * sin(a + 1.9), 2.2);
+
+          float inten = fall * (0.30 + body * 0.9) * dop;
           // Kept off white on purpose: at full intensity the bloom chain eats
           // the gradient and the disc turns into a flat bright ring.
           vec3 hot = vec3(1.0, 0.72, 0.34);
           vec3 cool = vec3(0.52, 0.22, 1.0);
           vec3 col = mix(hot, cool, smoothstep(0.0, 0.6, rn));
+          // The beamed side blue-shifts, the receding side reddens.
+          col = mix(col * vec3(1.15, 0.72, 0.42), col * vec3(0.82, 0.86, 1.25), dop);
           float al = clamp(inten * uAmount, 0.0, 1.0);
-          gl_FragColor = vec4(col * al * 1.5, al);
+          gl_FragColor = vec4(col * al * 1.9, al);
         }`,
     });
     this.disc = new THREE.Mesh(discGeo, this.discMat);
     this.disc.position.y = 0.02;
     this.disc.renderOrder = 7;
+
+    // ---- lensing halo ------------------------------------------------------
+    // A camera-facing ring standing off the core. The real effect it stands in
+    // for is the far side of the disc appearing lifted over the top of the hole
+    // by its own gravity; a billboard ring is a cheap, convincing shorthand for
+    // it and — unlike the flat disc — it reads from a top-down camera as well
+    // as a low one, which is what makes the object legible at every aspect
+    // ratio the game ships at.
+    this.haloMat = new THREE.ShaderMaterial({
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      uniforms: { uTime: this._time, uAmount: this._amount },
+      vertexShader: /* glsl */`
+        varying vec2 vP;
+        void main() {
+          vP = position.xy;
+          // Build the quad in view space so it always squarely faces us.
+          vec4 c = modelViewMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+          c.xy += position.xy * ${(BLACKHOLE.coreR * 3.4).toFixed(3)};
+          gl_Position = projectionMatrix * c;
+        }`,
+      fragmentShader: /* glsl */`
+        precision mediump float;
+        varying vec2 vP;
+        uniform float uTime; uniform float uAmount;
+        ${NOISE}
+        void main() {
+          float r = length(vP);
+          if (r > 1.0) discard;
+          float a = atan(vP.y, vP.x);
+
+          // The photon ring itself: thin, hard, and sitting just outside the
+          // core's silhouette.
+          float ring = exp(-pow((r - 0.42) * 22.0, 2.0));
+          // A second, softer arc outside it, brightest across the top — the
+          // lensed image of the disc's far side.
+          float lens = exp(-pow((r - 0.60) * 8.0, 2.0))
+                     * (0.35 + 0.65 * pow(max(0.0, sin(a)), 1.6));
+          // Streaks smeared around the ring, drifting.
+          float smear = hNoise(vec2(a * 3.4 + uTime * 0.7, r * 6.0));
+          float glow = exp(-pow((r - 0.5) * 3.2, 2.0)) * smear * 0.34;
+
+          float al = clamp((ring * 0.9 + lens * 0.55 + glow) * uAmount, 0.0, 1.0);
+          vec3 col = mix(vec3(1.0, 0.82, 0.52), vec3(0.72, 0.55, 1.0),
+                         smoothstep(0.40, 0.72, r));
+          gl_FragColor = vec4(col * al * 2.0, al);
+        }`,
+    });
+    this.halo = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.haloMat);
+    this.halo.frustumCulled = false;
+    this.halo.renderOrder = 9;
 
     // ---- boundary: where the pull ends, drawn on the deck -------------------
     const edgeGeo = new THREE.RingGeometry(BLACKHOLE.radius * 0.965, BLACKHOLE.radius, 96, 1);
@@ -159,7 +221,7 @@ export class BlackHole {
     this.edge.position.y = ARENA.floorY - ARENA.playY + 0.045;
     this.edge.renderOrder = 4;
 
-    this.root.add(this.core, this.disc, this.edge);
+    this.root.add(this.core, this.disc, this.halo, this.edge);
   }
 
   // ------------------------------------------------------------------- api --
@@ -304,14 +366,18 @@ export class BlackHole {
     // looks like a texture being turned off.
     const s = Math.pow(this.strength, 0.65);
     this.core.scale.setScalar(s);
+    // The disc does not spin on its transform — its rotation lives in the
+    // shader, so the relativistic beaming can stay pinned in world space
+    // instead of chasing the geometry around.
     this.disc.scale.set(s, 1, s);
-    this.disc.rotation.y = t * 0.35;
+    this.halo.scale.setScalar(s);
     this.edge.scale.set(0.35 + s * 0.65, 1, 0.35 + s * 0.65);
   }
 
   dispose() {
-    this.core.geometry.dispose(); this.disc.geometry.dispose(); this.edge.geometry.dispose();
-    this.coreMat.dispose(); this.discMat.dispose(); this.edgeMat.dispose();
+    for (const m of [this.core, this.disc, this.halo, this.edge]) m.geometry.dispose();
+    this.coreMat.dispose(); this.discMat.dispose();
+    this.haloMat.dispose(); this.edgeMat.dispose();
     this.scene.remove(this.root);
   }
 }

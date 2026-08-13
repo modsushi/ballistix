@@ -29,6 +29,7 @@ export class HUD {
       arcWord: el('arcWord'),
       salvMeter: el('salvMeter'),
       salvFill: el('salvFill'),
+      salvWord: el('salvWord'),
       pinMeter: el('pinMeter'),
       pinFill: el('pinFill'),
       pinWord: el('pinWord'),
@@ -59,6 +60,7 @@ export class HUD {
     this._arc = -1;
     this._arcState = '';
     this._salv = -1;
+    this._salvClosed = null;
     this._pin = -1;
     this._pinLive = null;
     this._bh = -1;
@@ -176,12 +178,29 @@ export class HUD {
   }
 
   /**
+   * The deck no longer pays out — the final duel is defence only. Shown rather
+   * than left to be inferred, because a meter that silently stops filling is
+   * indistinguishable from a bug.
+   */
+  setSalvageClosed(closed) {
+    if (closed === this._salvClosed) return;
+    this._salvClosed = closed;
+    this.dom.salvMeter.classList.toggle('closed', closed);
+    this.dom.salvWord.textContent = closed ? 'CLOSED' : 'SALVAGE';
+    if (closed) {
+      this._salv = 0;
+      this.dom.salvFill.style.width = '0%';
+    }
+  }
+
+  /**
    * Salvage banked toward the next point.
    *
    * @param {number} value  blocks shattered since the last payout
    * @param {number} per    blocks needed for a point
    */
   setSalvage(value, per) {
+    if (this._salvClosed) return;
     const pct = Math.round(Math.min(1, value / per) * 100);
     if (pct === this._salv) return;
     // A payout resets to zero; flash the meter rather than letting the bar
@@ -305,6 +324,8 @@ export class HUD {
     this._arcState = '';
     this.setArc(0, false, false);
     this._salv = -1;
+    this._salvClosed = null;
+    this.setSalvageClosed(false);
     this.setSalvage(0, BRICKS.perPoint);
     this._pin = -1;
     this._pinLive = null;
