@@ -453,6 +453,107 @@ export class Audio {
     o.start(t); o.stop(t + 0.45);
   }
 
+  // ----------------------------------------------------------- black hole --
+
+  /**
+   * Telegraph: an inhaling swell. Where the pinball warning is mechanical, this
+   * is the room being pulled at — a rising, detuned pair with no transient at
+   * all, so it arrives without ever having started.
+   */
+  blackHoleWarn() {
+    if (!this.ready || this.muted) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    for (const det of [0, 11]) {
+      const o = ctx.createOscillator();
+      o.type = 'sawtooth';
+      o.frequency.setValueAtTime(38, t);
+      o.frequency.exponentialRampToValueAtTime(150, t + 1.3);
+      o.detune.value = det;
+      const f = ctx.createBiquadFilter();
+      f.type = 'lowpass'; f.Q.value = 9;
+      f.frequency.setValueAtTime(160, t);
+      f.frequency.exponentialRampToValueAtTime(900, t + 1.3);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.13, t + 1.25);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 1.5);
+      o.connect(f); f.connect(g); g.connect(this.sfx);
+      o.start(t); o.stop(t + 1.55);
+    }
+  }
+
+  /**
+   * It tearing open: a downward sweep against an upward one. Two things moving
+   * in opposite directions at once is the cheapest way to make a sound feel
+   * like it has no bottom, which is the only quality a black hole really needs.
+   */
+  blackHoleOpen() {
+    if (!this.ready || this.muted) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    this.duck(1.2, 0.28);
+
+    const down = ctx.createOscillator();
+    down.type = 'sine';
+    down.frequency.setValueAtTime(320, t);
+    down.frequency.exponentialRampToValueAtTime(26, t + 1.1);
+    const dg = ctx.createGain();
+    dg.gain.setValueAtTime(0, t);
+    dg.gain.linearRampToValueAtTime(0.5, t + 0.02);
+    dg.gain.exponentialRampToValueAtTime(0.0001, t + 1.3);
+    down.connect(dg); dg.connect(this.sfx);
+    down.start(t); down.stop(t + 1.35);
+
+    const up = ctx.createOscillator();
+    up.type = 'sawtooth';
+    up.frequency.setValueAtTime(60, t);
+    up.frequency.exponentialRampToValueAtTime(2400, t + 0.9);
+    const uf = ctx.createBiquadFilter();
+    uf.type = 'bandpass'; uf.Q.value = 4;
+    uf.frequency.setValueAtTime(300, t);
+    uf.frequency.exponentialRampToValueAtTime(3400, t + 0.9);
+    const ug = ctx.createGain();
+    ug.gain.setValueAtTime(0.16, t);
+    ug.gain.exponentialRampToValueAtTime(0.0001, t + 1.0);
+    up.connect(uf); uf.connect(ug); ug.connect(this.sfx);
+    up.start(t); up.stop(t + 1.05);
+
+    // Noise wash, opening then shutting — the event horizon settling.
+    const n = this._noise(1.2, t);
+    const nf = ctx.createBiquadFilter();
+    nf.type = 'bandpass'; nf.Q.value = 0.7;
+    nf.frequency.setValueAtTime(900, t);
+    nf.frequency.exponentialRampToValueAtTime(140, t + 1.1);
+    const ng = ctx.createGain();
+    ng.gain.setValueAtTime(0.24, t);
+    ng.gain.exponentialRampToValueAtTime(0.0001, t + 1.2);
+    n.connect(nf); nf.connect(ng); ng.connect(this.sfx);
+  }
+
+  /** It collapsing: the open sound run backwards and much shorter. */
+  blackHoleClose() {
+    if (!this.ready || this.muted) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const o = ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(40, t);
+    o.frequency.exponentialRampToValueAtTime(420, t + 0.5);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.22, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.55);
+    const f = ctx.createBiquadFilter();
+    f.type = 'lowpass'; f.frequency.value = 2200;
+    o.connect(f); f.connect(g); g.connect(this.sfx);
+    o.start(t); o.stop(t + 0.58);
+
+    const n = this._noise(0.3, t + 0.42);
+    const nf = ctx.createBiquadFilter();
+    nf.type = 'highpass'; nf.frequency.value = 1800;
+    const ng = ctx.createGain();
+    ng.gain.setValueAtTime(0.12, t + 0.42);
+    ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.7);
+    n.connect(nf); nf.connect(ng); ng.connect(this.sfx);
+  }
+
   // -------------------------------------------------------------- pinball --
 
   /** Telegraph: a mechanical clunk with something spinning up under it. */

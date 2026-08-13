@@ -1,4 +1,4 @@
-import { BRICKS, PINBALL, PLAYERS, RULES } from '../core/config.js';
+import { BLACKHOLE, BRICKS, PINBALL, PLAYERS, RULES } from '../core/config.js';
 
 /**
  * DOM-side interface. Kept entirely out of the WebGL layer.
@@ -32,6 +32,9 @@ export class HUD {
       pinMeter: el('pinMeter'),
       pinFill: el('pinFill'),
       pinWord: el('pinWord'),
+      bhMeter: el('bhMeter'),
+      bhFill: el('bhFill'),
+      bhWord: el('bhWord'),
       combo: el('combo'),
       comboNum: el('combo').querySelector('b'),
       boot: el('boot'),
@@ -58,9 +61,12 @@ export class HUD {
     this._salv = -1;
     this._pin = -1;
     this._pinLive = null;
+    this._bh = -1;
+    this._bhLive = null;
     this._announceTimer = null;
-    // No readout for furniture that isn't in the match.
+    // No readout for anything that isn't in the match.
     if (!PINBALL.enabled) this.dom.pinMeter.style.display = 'none';
+    if (!BLACKHOLE.enabled) this.dom.bhMeter.style.display = 'none';
     this._buildPods();
     this._setControlHint();
   }
@@ -252,6 +258,22 @@ export class HUD {
     this.dom.pinWord.textContent = live ? 'LIVE' : 'BUMPERS';
   }
 
+  /**
+   * The singularity's cycle. Same bar convention as the wells: filling toward
+   * the next one, draining while it is open.
+   */
+  setBlackHole(value, live) {
+    const pct = Math.round(value * 100);
+    if (pct !== this._bh) {
+      this._bh = pct;
+      this.dom.bhFill.style.width = `${pct}%`;
+    }
+    if (live === this._bhLive) return;
+    this._bhLive = live;
+    this.dom.bhMeter.classList.toggle('live', live);
+    this.dom.bhWord.textContent = live ? 'OPEN' : 'SINGULARITY';
+  }
+
   announce(text, hold = 1500) {
     this.dom.announceText.textContent = text;
     this.dom.announce.classList.remove('show');
@@ -287,6 +309,9 @@ export class HUD {
     this._pin = -1;
     this._pinLive = null;
     this.setPinball(0, false);
+    this._bh = -1;
+    this._bhLive = null;
+    this.setBlackHole(0, false);
   }
 
   // --------------------------------------------------------------- result --

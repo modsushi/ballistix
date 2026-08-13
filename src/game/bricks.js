@@ -113,6 +113,7 @@ export class BrickField {
     this.bricks = [];
     this.liveCount = 0;
     this.spawned = 0;       // how many blocks have surfaced so far
+    this._nextAt = 0;       // play time the next one is due
     this.justSpawned = [];  // drained by the caller each frame, for effects
 
     const { w, d, h } = BRICKS;
@@ -321,6 +322,7 @@ export class BrickField {
     // copies. The field is therefore back to perfect symmetry every fourth
     // spawn and never more than three blocks away from it.
     this.spawned = 0;
+    this._nextAt = BRICKS.spawnFirst;
     this.justSpawned = [];
 
     this.bricks = placed.map((b, i) => {
@@ -343,15 +345,33 @@ export class BrickField {
     this._sync();
   }
 
-  /** Bring one block up out of the deck. */
+  /**
+   * Bring one block up out of the deck.
+   *
+   * `liveCount` is incremented here rather than when the rise finishes, so it
+   * counts slots *claimed* rather than slots occupied. The cap is checked
+   * against it, and a block that is still on its way up has already taken its
+   * place — counting it late would let the field admit more than `maxLive`
+   * during the second or so that several are arriving.
+   */
   _surface(index) {
     const b = this.bricks[index];
-    if (!b || b.phase !== DORMANT) return;
+    if (!b || b.phase !== DORMANT) return false;
     b.phase = REFORMING;
     b.anim = 0;
     b.flash = 0.85;
+    this.liveCount++;
     this.justSpawned.push(b);
+    return true;
   }
+
+  /**
+   * The blocks that are actually standing and collidable, for anything that
+   * needs to place itself around them. Exposed as a method rather than by
+   * letting callers test `phase` themselves — the lifecycle constants are this
+   * module's business.
+   */
+  standing() { return this.bricks.filter((b) => b.phase === LIVE); }
 
   /** Colour a block for the pilot who last struck it. */
   _tint(b, pilot) {
@@ -446,10 +466,21 @@ export class BrickField {
    *   the field's schedule lines up with the orb schedule and both stop dead
    *   during a serve, a knockout or a pause.
    */
-  update(dt, playTime = 0) {
+  update(dt, playTime = 0, aliveCount = 4) {
     this.justSpawned.length = 0;
-    const due = Math.floor((playTime - BRICKS.spawnFirst) / BRICKS.spawnEvery) + 1;
-    while (this.spawned < this.bricks.length && this.spawned < due) this._surface(this.spawned++);
+    const cap = Math.min(BRICKS.maxLive, BRICKS.perAlive * aliveCount);
+
+    // One block per interval, never a catch-up burst. The next slot is timed
+    // from the spawn that actually happened rather than from a fixed schedule,
+    // so a spawn deferred by the population cap doesn't cause several to
+    // arrive at once the moment room appears — and the attract demo, which
+    // starts 40 seconds into the match clock, fills in the same paced way a
+    // real match does instead of dumping its whole field on the first frame.
+    if (this.spawned < this.bricks.length && playTime >= this._nextAt
+        && this.liveCount < cap) {
+      if (this._surface(this.spawned)) this.spawned++;
+      this._nextAt = Math.max(playTime, this._nextAt) + BRICKS.spawnEvery;
+    }
 
     for (const b of this.bricks) {
       b.flash = Math.max(0, b.flash - dt * 4.4);
@@ -461,14 +492,18 @@ export class BrickField {
           break;
         case GONE:
           b.timer -= dt;
-          if (b.timer <= 0) { b.phase = REFORMING; b.anim = 0; b.flash = 0.85; }
+          // A block whose timer is up waits for a free slot rather than
+          // pushing the field over its ceiling.
+          if (b.timer <= 0 && this.liveCount < cap) {
+            b.phase = REFORMING; b.anim = 0; b.flash = 0.85;
+            this.liveCount++;
+          }
           break;
         case REFORMING:
           b.anim += dt / BRICKS.reformTime;
           if (b.anim >= 1) {
             b.phase = LIVE; b.hp = b.maxHp; b.anim = 0;
             this._tint(b, -1);
-            this.liveCount++;
           }
           break;
       }

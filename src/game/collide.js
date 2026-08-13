@@ -31,14 +31,14 @@ function unstick(vx, vz, nx, nz, speed) {
 /**
  * @param {object} o        orb
  * @param {number} dt
- * @param {object} ctx      { planes, crafts, bricks, pinball, events }
+ * @param {object} ctx      { planes, crafts, bricks, pinball, blackhole, events }
  *
  * `events` collects { type, ... } records for the caller to turn into audio,
  * particles and score changes. Keeping resolution free of side effects makes
  * the substep loop safe to run many times per frame.
  */
 export function stepOrb(o, dt, ctx) {
-  const { planes, crafts, bricks, pinball, events } = ctx;
+  const { planes, crafts, bricks, pinball, blackhole, events } = ctx;
 
   let remaining = dt;
   let guard = 0;
@@ -60,6 +60,13 @@ export function stepOrb(o, dt, ctx) {
       o.vx *= k; o.vz *= k;
       o.speed = shed;
     }
+
+    // ---- gravity ---------------------------------------------------------
+    // Applied per substep and before any contact, so the arc is integrated at
+    // the same resolution as everything else rather than once per frame — a
+    // once-per-frame bend would make the curve depend on the phone's frame
+    // rate, which is exactly what the fixed step exists to prevent.
+    if (blackhole) blackhole.affect(o, step);
 
     // ---- lightning fences ------------------------------------------------
     // Checked before paddles: while a pilot's fence is up it spans their whole

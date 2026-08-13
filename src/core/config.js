@@ -182,7 +182,34 @@ export const ORB = {
  * unfairness that no amount of tuning could remove.
  */
 export const BRICKS = {
-  perQuadrant: 4,     // total = 4x this
+  perQuadrant: 3,     // layout slots; total = 4x this
+
+  /**
+    * Hard ceiling on blocks standing at once, enforced against both the
+    * surfacing schedule and the regeneration of broken ones.
+    *
+    * The layout has twelve slots and only eight may ever be occupied, which is
+    * the point: which four are empty keeps changing, so the field is never the
+    * same obstacle course twice even within a single match, and the middle
+    * stays sparse enough to read the orb through. A block whose regen timer
+    * expires while the field is full simply waits its turn.
+    */
+  maxLive: 8,
+
+  /**
+    * The ceiling also scales with how many pilots are left: `perAlive` blocks
+    * each, capped by `maxLive`.
+    *
+    * This is the endgame valve. Goals get rarer as pilots are eliminated — two
+    * survivors defending two walls concede far less often than four defending
+    * four — while a fixed field keeps paying salvage out at the same rate. At a
+    * flat ceiling `tools/playtest.mjs` produced a match that sat at [6,3,0,0]
+    * for ninety-five seconds, both survivors banking points as fast as they
+    * dropped them. Thinning the field exactly when the drain thins keeps the
+    * two moving together, and it reads as the deck running out of material
+    * rather than as a rule.
+    */
+  perAlive: 2,
 
   /**
     * The deck starts **empty** and grows its own hazards.
@@ -236,7 +263,7 @@ export const BRICKS = {
     * seconds, which cut income far more than the ratio ever did. Measured with
     * `tools/playtest.mjs` at every step.
     */
-  perPoint: 10,
+  perPoint: 12,
   regen: 13,          // seconds a shattered block stays down
   reformTime: 0.85,   // seconds to fade and scale back in
   breakTime: 0.42,    // seconds of shatter animation
@@ -297,6 +324,57 @@ export const PINBALL = {
   slingSpeed: 25.5,   // the face fires at a fixed speed, pinball-style
   slingSpread: 0.62,  // how much contact offset angles the shot
   cool: 0.09,         // seconds before the same element can fire again
+};
+
+/**
+ * The singularity.
+ *
+ * One black hole, occasionally, somewhere off-centre. While it is open every
+ * orb inside its reach is pulled toward it and its path bends into an arc —
+ * shots do not travel in straight lines any more, and a return you aimed at a
+ * wall arrives somewhere else entirely.
+ *
+ * ### It turns orbs, it does not speed them up
+ *
+ * The pull is applied as an acceleration and then the velocity is renormalised
+ * back to the orb's own speed. Real gravity would trade potential for kinetic
+ * energy and spit the orb out faster than it arrived, which would wreck a speed
+ * model the whole game is tuned around — rally escalation, the audio intensity
+ * curve, the AI's reaction budget. Turning without accelerating gives exactly
+ * the thing that was asked for (an arc) and costs nothing elsewhere.
+ *
+ * ### It cannot capture an orb
+ *
+ * A circular orbit at radius r needs v²/r of inward acceleration. Against the
+ * slowest orb in the game, and at every radius inside the field, what this
+ * supplies is at least three times short of that — the pull falls off toward
+ * the boundary faster than the orbit requirement does, so the margin is
+ * smallest in the middle distances and still comfortable there. No orb can be
+ * trapped; the worst case is a hard bend. Worth having as a property of the
+ * numbers rather than as something playtesting failed to find, because a
+ * captured orb is a soft-locked match.
+ *
+ * ### Fairness
+ *
+ * A single object cannot be four-fold symmetric the way the brick field is, so
+ * instead each appearance steps to the next quadrant in order. Over a match
+ * every seat gets the same exposure, and no pilot ever gets it twice running.
+ */
+export const BLACKHOLE = {
+  enabled: true,
+  first: 26,          // seconds of match time before the first one opens
+  duration: 11,       // seconds it stays open
+  cooldown: 44,       // seconds between them — deliberately a rare event
+  warnTime: 1.4,      // telegraph before it tears open
+  openTime: 0.9,      // seconds to spin up to full strength, and to close
+
+  spawnR: 7.4,        // distance from the deck centre
+  radius: 6.6,        // reach of the pull
+  pull: 20,           // peak acceleration, units/sec² — about 30° of bend on a
+                      // crossing, more the closer to the core it passes
+  coreR: 0.95,        // the dark core
+  discR: 2.9,         // accretion disc
+  clearance: 2.2,     // keep-out from standing blocks when picking a spot
 };
 
 /**

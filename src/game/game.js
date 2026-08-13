@@ -1,5 +1,7 @@
 import * as THREE from 'three';
-import { ARC, ARENA, BRICKS, DIFFICULTY, ORB, PADDLE, PINBALL, PLAYERS, RULES } from '../core/config.js';
+import {
+  ARC, ARENA, BLACKHOLE, BRICKS, DIFFICULTY, ORB, PADDLE, PINBALL, PLAYERS, RULES,
+} from '../core/config.js';
 import { clamp, damp, lerp, rand } from '../core/math.js';
 import { Arena } from './arena.js';
 import { Craft } from './craft.js';
@@ -8,6 +10,7 @@ import { AI } from './ai.js';
 import { Effects } from './effects.js';
 import { BrickField } from './bricks.js';
 import { Pinball } from './pinball.js';
+import { BlackHole } from './blackhole.js';
 import { stepOrb, collideOrbs } from './collide.js';
 import { ArcField } from '../gfx/arcfield.js';
 import { POINTER_GAIN } from '../core/input.js';
@@ -67,6 +70,7 @@ export class Game {
     // mean no geometry, no materials and no per-frame work at all.
     this.pinball = PINBALL.enabled ? new Pinball(scene, preset) : null;
     this.bricks = new BrickField(scene, preset);
+    this.blackhole = BLACKHOLE.enabled ? new BlackHole(scene, preset) : null;
 
     this.crafts = [];
     for (let i = 0; i < 4; i++) this.crafts.push(new Craft(i, PLAYERS[i], assets, scene));
@@ -175,6 +179,7 @@ export class Game {
     // A fresh field every match. Laid out around the pinball elements, which
     // never move, so only the bricks need re-rolling.
     this.pinball?.reset();
+    this.blackhole?.reset();
     this.bricks.reset(this.pinball?.obstacles() ?? []);
 
     for (let i = 0; i < 4; i++) {
@@ -299,7 +304,8 @@ export class Game {
     // --- orbs ---------------------------------------------------------------
     const ctx = {
       planes: this.arena.planes, crafts: this.crafts,
-      bricks: this.bricks, pinball: this.pinball, events: ev,
+      bricks: this.bricks, pinball: this.pinball, blackhole: this.blackhole,
+      events: ev,
     };
     for (const o of this.orbs) {
       if (!o.active) continue;
@@ -667,7 +673,7 @@ export class Game {
    * deck changed, and told slightly before it happens.
    */
   _updateMiddle(dt) {
-    this.bricks.update(dt, this.playTime);
+    this.bricks.update(dt, this.playTime, this.aliveCount);
     // One ring's worth of effect at most. The attract demo starts 40 seconds
     // into the schedule and catches up several rings on its first frame; a dozen
     // simultaneous swells is a wall of noise rather than an arrival.
@@ -675,6 +681,19 @@ export class Game {
     for (let i = 0; i < Math.min(surfaced.length, 4); i++) this.effects.brickSurface(surfaced[i]);
     if (this.bricks.justSpawned.length && this.bricks.spawned === 1) {
       this._say('BLOCKS SURFACING\nBREAK THEM FOR POINTS', 1700);
+    }
+
+    const h = this.blackhole;
+    if (h) {
+      h.update(dt, this.matchTime, this.bricks);
+      if (h.justWarned) this.effects.blackHoleWarn(h);
+      if (h.justOpened) {
+        this.effects.blackHoleOpen(h);
+        this._say('SINGULARITY', 1300);
+      }
+      if (h.justClosed) this.effects.blackHoleClose(h);
+      if (h.live) this.effects.blackHoleAmbient(h, dt);
+      this.hud.setBlackHole(h.cycle01, h.live);
     }
 
     const p = this.pinball;
@@ -741,6 +760,7 @@ export class Game {
     for (const f of this.arcFields) f.dispose();
     this.bricks.dispose();
     this.pinball?.dispose();
+    this.blackhole?.dispose();
     this.effects.dispose();
     for (const c of this.crafts) c.dispose();
     for (const o of this.orbs) o.dispose();

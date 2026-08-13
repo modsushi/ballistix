@@ -11,6 +11,9 @@ one at a time as the match runs. Shattering one banks salvage for whoever last
 touched the orb, and enough salvage buys a point back — so points can be won as
 well as lost, and there is finally a reason to aim rather than just to survive.
 
+Every so often a **singularity** tears open somewhere on the deck. While it is
+there, orbs that pass inside its reach stop travelling in straight lines.
+
 There is also a set of **pinball wells** — pop bumpers and slingshots that
 surface on a timer — built, tuned and tested but currently switched off behind
 `PINBALL.enabled`, so the brick field can be judged on its own.
@@ -120,8 +123,8 @@ in it — but not from the opening whistle.
 
 **The deck escalates.** At kick-off it is bare, and the first exchange is the
 clean duel the game has always been. The first block surfaces at eight seconds
-and one more joins every five after that, so the field is complete around the
-ninety-second mark — by which point nothing crosses the middle unmolested.
+and one more joins every five after that, so the field is at its ceiling inside
+the first minute; the singularity makes its first appearance at 26 seconds.
 
 That arc is doing two jobs. It gives the match a shape — the same escalation
 the orb schedule provides, on a second axis — and it means someone who has
@@ -130,26 +133,43 @@ anything else is asked of them.
 
 ### Bricks
 
-Sixteen blocks fill an annulus between radius 4.6 and 12.6 — clear of the serve
-point and well clear of the goal approach lanes. Every contact bounces the orb
-and takes 0.55 off its speed, which is the single biggest reason the game plays
-slower than it did.
+Twelve layout slots fill an annulus between radius 4.6 and 12.6 — clear of the
+serve point and well clear of the goal approach lanes — of which **at most eight
+may be standing at once**. Every contact bounces the orb and takes 0.55 off its
+speed, which is the single biggest reason the game plays slower than it did.
+
+The ceiling is the interesting half of that. Which four slots are empty keeps
+changing as blocks break and regrow, so the field is never the same obstacle
+course twice even inside one match, and the middle stays sparse enough to track
+an orb through. A block whose regen timer expires while the field is full simply
+waits for a slot.
+
+It also **shrinks with the field of play**: two blocks per surviving pilot, so
+four survivors get eight and two get four. That is the endgame valve. Goals get
+rarer as pilots are eliminated — two survivors defending two walls concede far
+less often than four defending four — while a fixed field would keep paying
+salvage out at the same rate. At a flat ceiling `playtest.mjs` produced a match
+that sat at [6,3,0,0] for ninety-five seconds, both survivors banking points as
+fast as they dropped them. Thinning the field exactly when the drain thins keeps
+the two moving together, and it reads as the deck running out of material rather
+than as a rule.
 
 They arrive **one at a time**, in an order that walks the quadrants: block 0 of
 each quadrant, then block 1, and so on. Since the layout is four-fold symmetric,
 the field returns to perfect symmetry every fourth spawn and is never more than
-three blocks away from it.
+three blocks away from it. The interval is timed from the spawn that actually
+happened rather than from a fixed schedule, so a spawn deferred by the cap never
+causes a burst of arrivals the moment room appears.
 
 Blocks take two hits, or three toward the middle, and carry their damage
 visibly: a hairline seam and an outlined inset panel while healthy, then dark
 fissures that glow hotter as they go. A block wears the colour of the pilot who
 last struck it, so a glance at the middle tells you who has been farming it.
 
-Break one and whoever last touched the orb banks **salvage**. Every ten of those
-pays out a point, up to a ceiling of seven. Broken blocks reform after thirteen
+Break one and whoever last touched the orb banks **salvage**. Every twelve of
+those pays out a point, up to a ceiling of seven. Broken blocks reform after thirteen
 seconds, so the field erodes and grows back rather than being cleared once and
-gone — it settles at roughly a third to a half of the sixteen standing at any
-moment once the match is up to speed.
+gone — under sustained fire it sits well below its own ceiling.
 
 > Bricks-per-point is the most load-bearing number in the rework. An orb
 > crossing a full field contacts a block roughly every half second, so paying a
@@ -158,9 +178,46 @@ moment once the match is up to speed.
 > in full from the opening whistle — `playtest.mjs` produced a 260-second match
 > that never resolved, the last two pilots oscillating between four and eight
 > points for a hundred seconds because income exactly matched the drain. It
-> went to thirteen to fix that, and back to ten once the field shrank to
-> sixteen blocks arriving over ninety seconds. The ceiling exists for the same
-> reason: it stops a pilot farming an unloseable lead.
+> went to thirteen to fix that, and to twelve once the field shrank to a
+> capped one arriving a block at a time, which cut income far more than any
+> ratio did. The points ceiling exists for the same reason: it stops a pilot
+> farming an unloseable lead.
+
+### The singularity
+
+Every so often — 26 seconds into a match, then on a 44-second cooldown — a black
+hole tears open somewhere off-centre and stays for 11 seconds. Only ever one.
+Orbs that pass inside its 6.6-unit reach are pulled toward the core and their
+paths bend into arcs, so a return you aimed at a wall arrives somewhere else.
+
+Two properties are worth stating, because both are load-bearing:
+
+**It turns orbs without speeding them up.** The pull is applied as an
+acceleration and then the velocity is renormalised back to the orb's own speed.
+Real gravity would trade potential for kinetic energy and spit the orb out
+faster than it arrived, which would wreck a speed model the whole game is tuned
+around — rally escalation, the audio intensity curve, the AI's reaction budget.
+Turning without accelerating gives exactly the arc and costs nothing elsewhere.
+
+**It cannot capture an orb.** A circular orbit at radius *r* needs *v²/r* of
+inward acceleration, and against the slowest orb in the game, at every radius
+inside the field, the pull supplies at least three times less than that. No orb
+can be trapped; the worst case is a hard bend. That is a property of the numbers
+rather than something playtesting happened not to find, which matters because a
+captured orb is a soft-locked match.
+
+A single object can't be four-fold symmetric the way the brick field is, so
+instead each appearance steps to the next quadrant in order: every seat gets the
+same exposure over a match and nobody gets it twice running. It also avoids
+opening on top of a standing block, and the boundary of the pull is drawn on the
+deck as a dashed contracting ring, so the reach is something you can play around
+rather than something that happens to you.
+
+Visually it is four layers and no screen-space distortion — real lensing would
+mean another full-screen pass in a chain that already has twelve, for something
+on screen eleven seconds a minute. A genuinely black core that occludes what is
+behind it, a hard fresnel photon ring on its limb, an accretion disc of
+spiralling noise whose inner edge laps its outer one, and the boundary ring.
 
 ### Pinball (currently switched off)
 
@@ -254,6 +311,7 @@ src/
     orb.js              the plasma orb
     bricks.js           the breakable field: layout, damage, instanced render
     pinball.js          pop bumpers and slingshots
+    blackhole.js        the singularity: trajectory bending, accretion disc
     collide.js          substepped integration, contacts, AI prediction
     ai.js               rival pilots
     effects.js          events -> spectacle
@@ -359,15 +417,15 @@ Measured in-browser via `window.__ballistix.stats`:
 
 | | |
 | --- | --- |
-| Scene draw calls | ~89 |
+| Scene draw calls | ~88 |
 | Triangles | ~81k |
 | Post passes | 12 |
-| Shader programs | ~49 |
+| Shader programs | ~53 |
 | Textures | 13 |
 
 The brick field costs two of those draw calls and about 4k triangles, which is
 the payoff for instancing it and for generating the geometry rather than
-placing sixteen props.
+placing a dozen props.
 
 Quality tiers are picked from touch/cores/memory plus the GPU renderer string
 (`core/quality.js`), and a governor trims internal resolution between 1.0 and

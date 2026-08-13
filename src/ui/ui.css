@@ -387,6 +387,12 @@ body::after {
 .pin-meter.live .pin-word { color: var(--pin); text-shadow: 0 0 10px var(--pin); }
 .pin-meter.live .pin-bar i { background: var(--pin); box-shadow: 0 0 8px var(--pin); }
 
+/* The singularity shares the deck-state column and its own colour. */
+.pin-meter.bh { --pin: #b46bff; }
+.pin-meter.bh .pin-bar i { background: linear-gradient(90deg, #3d1d6b, var(--pin)); }
+.pin-meter.bh.live .pin-word { animation: bhPulse 1.1s ease-in-out infinite; }
+@keyframes bhPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+
 .wave-value.bump { animation: bump 0.55s var(--ease-snap); }
 @keyframes bump { 0% { transform: scale(1); } 35% { transform: scale(1.45); color: var(--p0); } 100% { transform: scale(1); } }
 

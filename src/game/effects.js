@@ -2,12 +2,15 @@ import * as THREE from 'three';
 import { Sparks } from '../gfx/particles.js';
 import { ARENA, PLAYERS } from '../core/config.js';
 import { ELEMENT_COLOR } from './pinball.js';
-import { PINBALL } from '../core/config.js';
+import { BLACKHOLE, PINBALL } from '../core/config.js';
 import { clamp, lerp, rand } from '../core/math.js';
 
 /** The warning ring contracts over exactly the telegraph window, so what the
  *  player sees closing is literally the time they have left. */
 const PIN_WARN = PINBALL.warnTime;
+
+/** Violet: the singularity's own colour, shared with no other system. */
+const BH_COLOR = 0xb46bff;
 
 /**
  * Turns gameplay events into spectacle.
@@ -471,6 +474,78 @@ export class Effects {
     this.rings.spawn(b.x, ARENA.playY - 0.85, b.z, 0.2, 3.4, 0.5, 0x8fe8ff);
     this.arena.shock(b.x, b.z, 0.5, 0x8fe8ff);
     this.audio.brickSurface();
+  }
+
+  // ----------------------------------------------------------- black hole --
+
+  /** The telegraph: the deck buckling where it is about to tear open. */
+  blackHoleWarn(h) {
+    this.rings.spawn(h.x, ARENA.playY - 0.86, h.z, BLACKHOLE.radius * 0.9, 0.5,
+      BLACKHOLE.warnTime, BH_COLOR);
+    this.arena.shock(h.x, h.z, 1.1, BH_COLOR);
+    this.audio.blackHoleWarn();
+  }
+
+  /** It tearing open. */
+  blackHoleOpen(h) {
+    const n = this.preset.sparks;
+    // Thrown outward, hard: the only moment this thing ever pushes.
+    this.sparks.burst({
+      at: [h.x, ARENA.playY, h.z], spread: 2,
+      count: Math.round(40 * (n / 520 + 0.5)),
+      speedMin: 9, speedMax: 30, lifeMin: 0.3, lifeMax: 0.9,
+      sizeMin: 6, sizeMax: 18,
+      color: 0xffffff, color2: BH_COLOR, kind: 1, drag: 2.2, grav: -3, jitter: 0.9,
+    });
+    this.rings.spawn(h.x, ARENA.playY - 0.85, h.z, 0.4, 13, 0.85, BH_COLOR);
+    this.rings.spawn(h.x, ARENA.playY, h.z, 0.3, 6, 0.6, 0xffffff, -Math.PI / 2);
+    this.arena.shock(h.x, h.z, 2.4, BH_COLOR);
+
+    this.flash = 0.3;
+    this.flashColor.set(0xc9a6ff).convertSRGBToLinear();
+    this.radial = 1.3;
+    this.audio.blackHoleOpen();
+    this.cam.shake(0.5);
+    this.cam.punch(3.4);
+  }
+
+  /**
+   * Matter falling in, every frame it is open. The particles are spawned on
+   * the boundary and aimed inward — the pull itself is a simulation detail the
+   * player can't see, so the debris has to show it.
+   */
+  blackHoleAmbient(h, dt) {
+    this._bhAcc = (this._bhAcc || 0) + dt * (14 + h.strength * 24);
+    if (this._bhAcc < 1) return;
+    this._bhAcc = 0;
+    const a = rand(0, Math.PI * 2);
+    const r = BLACKHOLE.radius * rand(0.45, 1.0);
+    const x = h.x + Math.cos(a) * r, z = h.z + Math.sin(a) * r;
+    // Aimed a little off the centre so the streams spiral rather than fall
+    // straight in, which is the difference between a drain and an orbit.
+    const swirl = a + Math.PI + rand(0.5, 1.0);
+    this.sparks.burst({
+      at: [x, ARENA.playY + rand(-0.3, 0.5), z],
+      dir: [Math.cos(swirl), 0.05, Math.sin(swirl)], spread: 0.16,
+      count: 1, speedMin: 6, speedMax: 13, lifeMin: 0.35, lifeMax: 0.7,
+      sizeMin: 4, sizeMax: 10, color: BH_COLOR, color2: 0xffd9a0,
+      kind: 1, drag: 0.4, grav: 0,
+    });
+  }
+
+  /** It collapsing. */
+  blackHoleClose(h) {
+    this.rings.spawn(h.x, ARENA.playY - 0.85, h.z, 9, 0.3, 0.75, BH_COLOR);
+    this.sparks.burst({
+      at: [h.x, ARENA.playY, h.z], spread: 2,
+      count: Math.round(16 * (this.preset.sparks / 520 + 0.4)),
+      speedMin: 2, speedMax: 9, lifeMin: 0.3, lifeMax: 0.8,
+      sizeMin: 5, sizeMax: 14, color: BH_COLOR, color2: 0xffffff,
+      kind: 0, drag: 2.4, grav: -2,
+    });
+    this.arena.shock(h.x, h.z, 1.4, BH_COLOR);
+    this.audio.blackHoleClose();
+    this.cam.shake(0.22);
   }
 
   // -------------------------------------------------------------- pinball --
