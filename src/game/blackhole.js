@@ -78,7 +78,7 @@ export class BlackHole {
         varying vec3 vN; varying vec3 vV;
         uniform float uTime; uniform float uAmount;
         void main() {
-          float fres = 1.0 - abs(dot(normalize(vN), vV));
+          float fres = clamp(1.0 - abs(dot(normalize(vN), vV)), 0.0, 1.0);
           // Two rings: a hard photon ring right on the limb and a softer
           // halo just outside it. Everything inside stays absolutely black,
           // which is what makes it read as a hole rather than a dark ball.

@@ -38,7 +38,11 @@ float fbm1(float x) {
   float s = 0.0, a = 0.5;
   for (int i = 0; i < 4; i++) { s += a * vn1(x); x *= 2.07; a *= 0.5; }
   return s;
-}`;
+}
+// exp(-x²), written as a multiply. pow(x, 2.0) with a negative x is undefined
+// in GLSL and several mobile drivers return NaN for it, which then blows out
+// the bloom chain — so we never hand a signed value to pow().
+float gauss(float x) { return exp(-x * x); }`;
 
 const FENCE_FRAG = /* glsl */`
 precision highp float;
@@ -106,7 +110,7 @@ void main() {
     float jy = vn1(slot * 2.11 + fi * 91.0);
     float dx = abs(uv.x - jx) + fbm1(uv.y * 26.0 + slot) * 0.012;
     jumps += exp(-dx * dx * 2600.0)
-           * exp(-pow((uv.y - jy) * 3.4, 2.0))
+           * gauss((uv.y - jy) * 3.4)
            * gate(slot + fi, 60.0);
   }
 
@@ -116,17 +120,17 @@ void main() {
   // with noise turns them back into current crawling along a rail.
   float railMask = smoothstep(0.35, 0.75, fbm1(uv.x * 22.0 + uTime * 3.1))
                  + smoothstep(0.45, 0.85, fbm1(uv.x * 31.0 - uTime * 2.3)) * 0.7;
-  float rails = (exp(-pow((uv.y - 0.02) * 90.0, 2.0)) + exp(-pow((uv.y - 0.98) * 90.0, 2.0)))
+  float rails = (gauss((uv.y - 0.02) * 90.0) + gauss((uv.y - 0.98) * 90.0))
               * railMask;
-  float posts = exp(-pow(uv.x * 55.0, 2.0)) + exp(-pow((uv.x - 1.0) * 55.0, 2.0));
+  float posts = gauss(uv.x * 55.0) + gauss((uv.x - 1.0) * 55.0);
 
   // Barely-there haze so the gaps read as charged air rather than as holes.
-  float haze = exp(-pow((uv.y - 0.5) * 2.6, 2.0))
+  float haze = gauss((uv.y - 0.5) * 2.6)
              * (0.030 + 0.022 * sin(uTime * 13.0 + uv.x * 24.0));
 
   // --- impact --------------------------------------------------------------
   float dHit = abs(uv.x - uHitU);
-  float wave = exp(-pow((dHit - (1.0 - uHit) * 0.55) * 10.0, 2.0)) * uHit;
+  float wave = gauss((dHit - (1.0 - uHit) * 0.55) * 10.0) * uHit;
   float flash = exp(-dHit * dHit * 240.0) * uHit;
 
   float energy = (e + jumps * 1.2 + rails * 0.30 + posts * 0.85 + haze) * grow;
@@ -159,7 +163,7 @@ void main() {
   if (grow <= 0.002) discard;
 
   // Across the strip: tight to the fence line, gone within a metre.
-  float across = exp(-pow((uv.y - 0.5) * 5.4, 2.0));
+  float across = gauss((uv.y - 0.5) * 5.4);
   // Tendrils crawling outward. Contrast-stretched hard so this reads as
   // discharge branching over the deck rather than as a lit strip of floor —
   // a smooth band under the fence is most of what makes the whole thing look

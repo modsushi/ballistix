@@ -34,6 +34,11 @@ out vec4 fragColor;
 
 float karis(vec3 c) { return 1.0 / (1.0 + max(c.r, max(c.g, c.b))); }
 
+// Drop NaN/Inf to black. Comparisons against NaN are always false, so the mix
+// selects 0. One poisoned scene pixel would otherwise be spread over the whole
+// screen by the downsample chain and read as a full-screen flash.
+vec3 scrub(vec3 c) { return mix(vec3(0.0), c, lessThan(abs(c), vec3(1e19))); }
+
 void main() {
   vec2 t = uTexel;
   vec3 a = texture(uTex, vUv + vec2(-t.x, -t.y)).rgb;
@@ -51,7 +56,9 @@ void main() {
   soft = soft * soft / (4.0 * uKnee + 1e-4);
   col *= max(soft, br - uThreshold) / max(br, 1e-4);
 
-  fragColor = vec4(min(col, vec3(48.0)), 1.0);
+  // Scrub before the clamp: min() with a NaN operand is implementation-defined
+  // and some drivers hand back the *other* operand, i.e. a solid 48.0 white.
+  fragColor = vec4(min(scrub(col), vec3(48.0)), 1.0);
 }`;
 
 const DOWN = /* glsl */`
@@ -153,6 +160,10 @@ float hash12(vec2 p) {
   return fract((p3.x + p3.y) * p3.z);
 }
 
+// See the prefilter: comparisons against NaN are false, so this maps any
+// non-finite channel to 0 rather than letting it survive the tonemap.
+vec3 scrub(vec3 c) { return mix(vec3(0.0), c, lessThan(abs(c), vec3(1e19))); }
+
 void main() {
   vec2 uv = vUv;
   vec2 cen = uv - 0.5;
@@ -190,7 +201,7 @@ void main() {
     bloom.b = texture(uBloom, uv - off2).b;
   }
 
-  vec3 col = scene + bloom * uBloomStrength;
+  vec3 col = scrub(scene) + scrub(bloom) * uBloomStrength;
   col += uFlashTint * uFlash;
   col *= uExposure;
 

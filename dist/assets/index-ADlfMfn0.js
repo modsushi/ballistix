@@ -33,7 +33,7 @@ void main() {
   vec3 d = normalize(vDir);
 
   // Base vertical gradient — cold void above, a faint warm floor below.
-  float up = d.y * 0.5 + 0.5;
+  float up = clamp(d.y * 0.5 + 0.5, 0.0, 1.0);
   vec3 col = mix(uHorizon, uZenith, pow(up, 0.75));
 
   // Two nebula layers at different scales, warped by a third for filament
@@ -146,7 +146,7 @@ void main() {
   col += albedo * 0.045;                                   // ambient fill
 
   // Atmospheric limb: forward-scattered light hugging the silhouette.
-  float fres = pow(1.0 - max(dot(n, V), 0.0), 3.2);
+  float fres = pow(clamp(1.0 - dot(n, V), 0.0, 1.0), 3.2);
   float lit  = smoothstep(-0.55, 0.6, ndl);
   col += vec3(0.72, 0.42, 0.92) * fres * (0.18 + lit * 1.35);
 
@@ -186,6 +186,11 @@ out vec4 fragColor;
 
 float karis(vec3 c) { return 1.0 / (1.0 + max(c.r, max(c.g, c.b))); }
 
+// Drop NaN/Inf to black. Comparisons against NaN are always false, so the mix
+// selects 0. One poisoned scene pixel would otherwise be spread over the whole
+// screen by the downsample chain and read as a full-screen flash.
+vec3 scrub(vec3 c) { return mix(vec3(0.0), c, lessThan(abs(c), vec3(1e19))); }
+
 void main() {
   vec2 t = uTexel;
   vec3 a = texture(uTex, vUv + vec2(-t.x, -t.y)).rgb;
@@ -203,7 +208,9 @@ void main() {
   soft = soft * soft / (4.0 * uKnee + 1e-4);
   col *= max(soft, br - uThreshold) / max(br, 1e-4);
 
-  fragColor = vec4(min(col, vec3(48.0)), 1.0);
+  // Scrub before the clamp: min() with a NaN operand is implementation-defined
+  // and some drivers hand back the *other* operand, i.e. a solid 48.0 white.
+  fragColor = vec4(min(scrub(col), vec3(48.0)), 1.0);
 }`,Je=`
 precision highp float;
 in vec2 vUv;
@@ -299,6 +306,10 @@ float hash12(vec2 p) {
   return fract((p3.x + p3.y) * p3.z);
 }
 
+// See the prefilter: comparisons against NaN are false, so this maps any
+// non-finite channel to 0 rather than letting it survive the tonemap.
+vec3 scrub(vec3 c) { return mix(vec3(0.0), c, lessThan(abs(c), vec3(1e19))); }
+
 void main() {
   vec2 uv = vUv;
   vec2 cen = uv - 0.5;
@@ -336,7 +347,7 @@ void main() {
     bloom.b = texture(uBloom, uv - off2).b;
   }
 
-  vec3 col = scene + bloom * uBloomStrength;
+  vec3 col = scrub(scene) + scrub(bloom) * uBloomStrength;
   col += uFlashTint * uFlash;
   col *= uExposure;
 
@@ -399,6 +410,11 @@ float hash21(vec2 p) {
   p += dot(p, p + 23.45);
   return fract(p.x * p.y);
 }
+
+// exp(-x²), written as a multiply. pow(x, 2.0) with a negative x is undefined
+// in GLSL and several mobile drivers return NaN for it, which then blows out
+// the bloom chain — so we never hand a signed value to pow().
+float gauss(float x) { return exp(-x * x); }
 `,pt=`
   vec2 P = vWPos.xz;
   float dist = length(P);
@@ -445,7 +461,7 @@ float hash21(vec2 p) {
     if (w.w <= 0.001) continue;
     float d = length(P - w.xy);
     float rad = w.z * 13.0;
-    float ring = exp(-pow((d - rad) * 1.9, 2.0));
+    float ring = gauss((d - rad) * 1.9);
     float fade = w.w * exp(-w.z * 3.4);
     energy += uWaveTint[i] * ring * fade * 1.05;
     // Trailing inner fill gives the ring some body instead of a bare line.
@@ -454,13 +470,13 @@ float hash21(vec2 p) {
 
   // ---- serve charge-up ----------------------------------------------------
   if (uCharge > 0.001) {
-    float ring = exp(-pow((dist - (1.0 - uCharge) * 11.0) * 1.4, 2.0));
+    float ring = gauss((dist - (1.0 - uCharge) * 11.0) * 1.4);
     energy += vec3(0.6, 0.95, 1.0) * ring * uCharge * 1.8;
   }
 
   // ---- centre emblem ------------------------------------------------------
   float core = exp(-dist * dist * 0.075);
-  float coreRing = exp(-pow((dist - 3.1) * 3.4, 2.0));
+  float coreRing = gauss((dist - 3.1) * 3.4);
   energy += vec3(0.10, 0.44, 0.66) * (core * 0.16 + coreRing * 0.26 * (0.65 + 0.35 * sin(uTime * 1.4)));
 
   // ---- rim ----------------------------------------------------------------
@@ -520,6 +536,10 @@ float hash21(vec2 p) {
   p += dot(p, p + 23.45);
   return fract(p.x * p.y);
 }
+// exp(-x²), written as a multiply. pow(x, 2.0) with a negative x is undefined
+// in GLSL and several mobile drivers return NaN for it, which then blows out
+// the bloom chain — so we never hand a signed value to pow().
+float gauss(float x) { return exp(-x * x); }
 
 void main() {
   vec2 uv = vUv;
@@ -536,13 +556,13 @@ void main() {
 
   // Grazing angles should light up — that's what makes it feel like a surface
   // of energy rather than a decal.
-  float fres = pow(1.0 - abs(dot(normalize(uNormal), vViewDir)), 2.1);
+  float fres = pow(clamp(1.0 - abs(dot(normalize(uNormal), vViewDir)), 0.0, 1.0), 2.1);
 
   // Vertical containment: bright at the base, dissolving toward the top.
   float vFade = smoothstep(1.02, 0.18, uv.y);
   float base  = smoothstep(0.26, 0.0, uv.y);
 
-  float scan = exp(-pow(fract(uv.y - uTime * 0.22) - 0.5, 2.0) * 42.0);
+  float scan = gauss((fract(uv.y - uTime * 0.22) - 0.5) * 6.48);
 
   float a = edge * 0.42 + cell + fres * 0.34 + scan * 0.22 + base * 0.5;
   a *= vFade;
@@ -552,7 +572,7 @@ void main() {
   // ---- impact bloom --------------------------------------------------------
   if (uHit > 0.001) {
     float d = distance(uv * vec2(4.2, 1.0), uHitPos * vec2(4.2, 1.0));
-    float ripple = exp(-pow((d - (1.0 - uHit) * 1.5) * 3.4, 2.0));
+    float ripple = gauss((d - (1.0 - uHit) * 1.5) * 3.4);
     float flash = exp(-d * 5.0) * uHit;
     col += (uColor * 2.0 + vec3(0.55)) * (ripple * uHit * 1.8 + flash * 2.2);
   }
@@ -587,7 +607,7 @@ void main() {
           float rim  = smoothstep(0.11,0.0,v) + smoothstep(0.90,1.0,v) * 0.6;
           // Ends taper so the field looks projected, not cut off.
           float ends = smoothstep(0.0,0.10,u) * smoothstep(1.0,0.90,u);
-          float fres = pow(1.0 - abs(dot(normalize(vN), vV)), 1.7);
+          float fres = pow(clamp(1.0 - abs(dot(normalize(vN), vV)), 0.0, 1.0), 1.7);
 
           float ripple = 0.5 + 0.5 * sin(u * 15.0 - uTime * 4.0);
           float a = (band * 0.30 + rim * 0.55 + fres * 0.45) * ends;
@@ -621,7 +641,7 @@ void main() {
   side = len > 1e-4 ? side / len : vec3(1.0, 0.0, 0.0);
 
   // Tapered: full width at the head, pinched to nothing at the tail.
-  float w = uWidth * pow(1.0 - aT, 0.62) * (1.0 - 0.35 * aT);
+  float w = uWidth * pow(clamp(1.0 - aT, 0.0, 1.0), 0.62) * (1.0 - 0.35 * aT);
   vec3 p = position + side * aSide * w;
   gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
 }`,Dt=`
@@ -632,9 +652,12 @@ uniform vec3 uColor;
 uniform vec3 uHot;
 uniform float uOpacity;
 void main() {
-  float across = 1.0 - abs(vEdge);            // 1 at the spine, 0 at the edges
+  // Clamped before every pow(): the interpolated edge/age values can overshoot
+  // their [0,1] range by an ulp at mediump, and pow() of a negative base is NaN
+  // — which is what turned the ribbon edges into black stipple on mobile.
+  float across = clamp(1.0 - abs(vEdge), 0.0, 1.0);  // 1 at the spine, 0 at the edges
   float body = pow(across, 1.6);
-  float fade = pow(1.0 - vT, 2.1);
+  float fade = pow(clamp(1.0 - vT, 0.0, 1.0), 2.1);
   // Hot core near the head cooling to the team colour down the tail.
   vec3 col = mix(uColor, uHot, body * (1.0 - vT * 0.75));
   float a = body * fade * uOpacity;
@@ -668,7 +691,10 @@ void main() {
   float n = vn(q + vec3(0.0, uTime * 0.9, uTime * 0.35));
   n = n * 0.65 + vn(q * 2.3 - uTime * 0.6) * 0.35;
 
-  float fres = pow(1.0 - max(dot(normalize(vN), vV), 0.0), 2.4);
+  // clamp, not max: on mobile precision the dot can land just above 1.0, and
+  // pow() of a negative base is NaN — which paints the rim black and poisons
+  // the bloom chain with a value that smears across the screen.
+  float fres = pow(clamp(1.0 - dot(normalize(vN), vV), 0.0, 1.0), 2.4);
 
   vec3 col = mix(uColor, uHot, smoothstep(0.42, 0.86, n));
   col = mix(col, uHot * 1.6, fres * 0.75);
@@ -679,7 +705,7 @@ precision mediump float;
 varying vec3 vN; varying vec3 vV; varying vec3 vLocal;
 uniform vec3 uColor; uniform float uTime; uniform float uEnergy;
 void main() {
-  float fres = pow(1.0 - max(dot(normalize(vN), vV), 0.0), 3.1);
+  float fres = pow(clamp(1.0 - dot(normalize(vN), vV), 0.0, 1.0), 3.1);
   // Latitude bands drifting upward read as containment rings.
   float bands = 0.5 + 0.5 * sin(normalize(vLocal).y * 19.0 - uTime * 4.5);
   float a = fres * (0.55 + bands * 0.45);
@@ -800,7 +826,7 @@ void main() {
         uniform float uTime;
         varying vec2 vState; varying vec3 vNrm; varying vec3 vView;
         void main() {
-          float fres = pow(1.0 - abs(dot(normalize(vNrm), vView)), 1.6);
+          float fres = pow(clamp(1.0 - abs(dot(normalize(vNrm), vView)), 0.0, 1.0), 1.6);
           float idle = 0.55 + 0.45 * sin(uTime * 2.6 + vState.y * 6.28);
           float a = clamp(0.14 + fres * 0.34 + idle * 0.12 + vState.x * 1.4, 0.0, 1.0);
           vec3 col = vec3(1.0, 0.66, 0.22) * (1.0 + vState.x * 2.0) + vec3(1.0) * vState.x;
@@ -919,7 +945,7 @@ float bNoise(vec3 p){
           ${yn}
           // Silhouette-only: a fresnel rim so the aura hugs the block's edge
           // instead of fogging its faces.
-          float fres = pow(1.0 - abs(dot(normalize(vNrm), vView)), 2.6);
+          float fres = pow(clamp(1.0 - abs(dot(normalize(vNrm), vView)), 0.0, 1.0), 2.6);
           float a = fres * (0.13 + hp * 0.11) + seam * 0.20 + slot * 0.26;
           a += crack * damage * 0.5 + flash * 0.85;
           a = clamp(a, 0.0, 1.0);
@@ -943,7 +969,7 @@ float hNoise(vec2 p){
         varying vec3 vN; varying vec3 vV;
         uniform float uTime; uniform float uAmount;
         void main() {
-          float fres = 1.0 - abs(dot(normalize(vN), vV));
+          float fres = clamp(1.0 - abs(dot(normalize(vN), vV)), 0.0, 1.0);
           // Two rings: a hard photon ring right on the limb and a softer
           // halo just outside it. Everything inside stays absolutely black,
           // which is what makes it read as a hole rather than a dark ball.
@@ -1007,7 +1033,11 @@ float fbm1(float x) {
   float s = 0.0, a = 0.5;
   for (int i = 0; i < 4; i++) { s += a * vn1(x); x *= 2.07; a *= 0.5; }
   return s;
-}`,Mn=`
+}
+// exp(-x²), written as a multiply. pow(x, 2.0) with a negative x is undefined
+// in GLSL and several mobile drivers return NaN for it, which then blows out
+// the bloom chain — so we never hand a signed value to pow().
+float gauss(float x) { return exp(-x * x); }`,Mn=`
 precision highp float;
 varying vec2 vUv;
 
@@ -1073,7 +1103,7 @@ void main() {
     float jy = vn1(slot * 2.11 + fi * 91.0);
     float dx = abs(uv.x - jx) + fbm1(uv.y * 26.0 + slot) * 0.012;
     jumps += exp(-dx * dx * 2600.0)
-           * exp(-pow((uv.y - jy) * 3.4, 2.0))
+           * gauss((uv.y - jy) * 3.4)
            * gate(slot + fi, 60.0);
   }
 
@@ -1083,17 +1113,17 @@ void main() {
   // with noise turns them back into current crawling along a rail.
   float railMask = smoothstep(0.35, 0.75, fbm1(uv.x * 22.0 + uTime * 3.1))
                  + smoothstep(0.45, 0.85, fbm1(uv.x * 31.0 - uTime * 2.3)) * 0.7;
-  float rails = (exp(-pow((uv.y - 0.02) * 90.0, 2.0)) + exp(-pow((uv.y - 0.98) * 90.0, 2.0)))
+  float rails = (gauss((uv.y - 0.02) * 90.0) + gauss((uv.y - 0.98) * 90.0))
               * railMask;
-  float posts = exp(-pow(uv.x * 55.0, 2.0)) + exp(-pow((uv.x - 1.0) * 55.0, 2.0));
+  float posts = gauss(uv.x * 55.0) + gauss((uv.x - 1.0) * 55.0);
 
   // Barely-there haze so the gaps read as charged air rather than as holes.
-  float haze = exp(-pow((uv.y - 0.5) * 2.6, 2.0))
+  float haze = gauss((uv.y - 0.5) * 2.6)
              * (0.030 + 0.022 * sin(uTime * 13.0 + uv.x * 24.0));
 
   // --- impact --------------------------------------------------------------
   float dHit = abs(uv.x - uHitU);
-  float wave = exp(-pow((dHit - (1.0 - uHit) * 0.55) * 10.0, 2.0)) * uHit;
+  float wave = gauss((dHit - (1.0 - uHit) * 0.55) * 10.0) * uHit;
   float flash = exp(-dHit * dHit * 240.0) * uHit;
 
   float energy = (e + jumps * 1.2 + rails * 0.30 + posts * 0.85 + haze) * grow;
@@ -1123,7 +1153,7 @@ void main() {
   if (grow <= 0.002) discard;
 
   // Across the strip: tight to the fence line, gone within a metre.
-  float across = exp(-pow((uv.y - 0.5) * 5.4, 2.0));
+  float across = gauss((uv.y - 0.5) * 5.4);
   // Tendrils crawling outward. Contrast-stretched hard so this reads as
   // discharge branching over the deck rather than as a lit strip of floor —
   // a smooth band under the fence is most of what makes the whole thing look

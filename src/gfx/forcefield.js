@@ -54,6 +54,10 @@ float hash21(vec2 p) {
   p += dot(p, p + 23.45);
   return fract(p.x * p.y);
 }
+// exp(-x²), written as a multiply. pow(x, 2.0) with a negative x is undefined
+// in GLSL and several mobile drivers return NaN for it, which then blows out
+// the bloom chain — so we never hand a signed value to pow().
+float gauss(float x) { return exp(-x * x); }
 
 void main() {
   vec2 uv = vUv;
@@ -70,13 +74,13 @@ void main() {
 
   // Grazing angles should light up — that's what makes it feel like a surface
   // of energy rather than a decal.
-  float fres = pow(1.0 - abs(dot(normalize(uNormal), vViewDir)), 2.1);
+  float fres = pow(clamp(1.0 - abs(dot(normalize(uNormal), vViewDir)), 0.0, 1.0), 2.1);
 
   // Vertical containment: bright at the base, dissolving toward the top.
   float vFade = smoothstep(1.02, 0.18, uv.y);
   float base  = smoothstep(0.26, 0.0, uv.y);
 
-  float scan = exp(-pow(fract(uv.y - uTime * 0.22) - 0.5, 2.0) * 42.0);
+  float scan = gauss((fract(uv.y - uTime * 0.22) - 0.5) * 6.48);
 
   float a = edge * 0.42 + cell + fres * 0.34 + scan * 0.22 + base * 0.5;
   a *= vFade;
@@ -86,7 +90,7 @@ void main() {
   // ---- impact bloom --------------------------------------------------------
   if (uHit > 0.001) {
     float d = distance(uv * vec2(4.2, 1.0), uHitPos * vec2(4.2, 1.0));
-    float ripple = exp(-pow((d - (1.0 - uHit) * 1.5) * 3.4, 2.0));
+    float ripple = gauss((d - (1.0 - uHit) * 1.5) * 3.4);
     float flash = exp(-d * 5.0) * uHit;
     col += (uColor * 2.0 + vec3(0.55)) * (ripple * uHit * 1.8 + flash * 2.2);
   }

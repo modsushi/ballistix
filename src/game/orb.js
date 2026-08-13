@@ -47,7 +47,10 @@ void main() {
   float n = vn(q + vec3(0.0, uTime * 0.9, uTime * 0.35));
   n = n * 0.65 + vn(q * 2.3 - uTime * 0.6) * 0.35;
 
-  float fres = pow(1.0 - max(dot(normalize(vN), vV), 0.0), 2.4);
+  // clamp, not max: on mobile precision the dot can land just above 1.0, and
+  // pow() of a negative base is NaN — which paints the rim black and poisons
+  // the bloom chain with a value that smears across the screen.
+  float fres = pow(clamp(1.0 - dot(normalize(vN), vV), 0.0, 1.0), 2.4);
 
   vec3 col = mix(uColor, uHot, smoothstep(0.42, 0.86, n));
   col = mix(col, uHot * 1.6, fres * 0.75);
@@ -60,7 +63,7 @@ precision mediump float;
 varying vec3 vN; varying vec3 vV; varying vec3 vLocal;
 uniform vec3 uColor; uniform float uTime; uniform float uEnergy;
 void main() {
-  float fres = pow(1.0 - max(dot(normalize(vN), vV), 0.0), 3.1);
+  float fres = pow(clamp(1.0 - dot(normalize(vN), vV), 0.0, 1.0), 3.1);
   // Latitude bands drifting upward read as containment rings.
   float bands = 0.5 + 0.5 * sin(normalize(vLocal).y * 19.0 - uTime * 4.5);
   float a = fres * (0.55 + bands * 0.45);

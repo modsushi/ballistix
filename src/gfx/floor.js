@@ -49,6 +49,11 @@ float hash21(vec2 p) {
   p += dot(p, p + 23.45);
   return fract(p.x * p.y);
 }
+
+// exp(-x²), written as a multiply. pow(x, 2.0) with a negative x is undefined
+// in GLSL and several mobile drivers return NaN for it, which then blows out
+// the bloom chain — so we never hand a signed value to pow().
+float gauss(float x) { return exp(-x * x); }
 `;
 
 const BODY = /* glsl */`
@@ -97,7 +102,7 @@ const BODY = /* glsl */`
     if (w.w <= 0.001) continue;
     float d = length(P - w.xy);
     float rad = w.z * 13.0;
-    float ring = exp(-pow((d - rad) * 1.9, 2.0));
+    float ring = gauss((d - rad) * 1.9);
     float fade = w.w * exp(-w.z * 3.4);
     energy += uWaveTint[i] * ring * fade * 1.05;
     // Trailing inner fill gives the ring some body instead of a bare line.
@@ -106,13 +111,13 @@ const BODY = /* glsl */`
 
   // ---- serve charge-up ----------------------------------------------------
   if (uCharge > 0.001) {
-    float ring = exp(-pow((dist - (1.0 - uCharge) * 11.0) * 1.4, 2.0));
+    float ring = gauss((dist - (1.0 - uCharge) * 11.0) * 1.4);
     energy += vec3(0.6, 0.95, 1.0) * ring * uCharge * 1.8;
   }
 
   // ---- centre emblem ------------------------------------------------------
   float core = exp(-dist * dist * 0.075);
-  float coreRing = exp(-pow((dist - 3.1) * 3.4, 2.0));
+  float coreRing = gauss((dist - 3.1) * 3.4);
   energy += vec3(0.10, 0.44, 0.66) * (core * 0.16 + coreRing * 0.26 * (0.65 + 0.35 * sin(uTime * 1.4)));
 
   // ---- rim ----------------------------------------------------------------

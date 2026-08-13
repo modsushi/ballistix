@@ -169,7 +169,7 @@ export class Pinball {
         uniform float uTime;
         varying vec2 vState; varying vec3 vNrm; varying vec3 vView;
         void main() {
-          float fres = pow(1.0 - abs(dot(normalize(vNrm), vView)), 1.6);
+          float fres = pow(clamp(1.0 - abs(dot(normalize(vNrm), vView)), 0.0, 1.0), 1.6);
           float idle = 0.55 + 0.45 * sin(uTime * 2.6 + vState.y * 6.28);
           float a = clamp(0.14 + fres * 0.34 + idle * 0.12 + vState.x * 1.4, 0.0, 1.0);
           vec3 col = vec3(1.0, 0.66, 0.22) * (1.0 + vState.x * 2.0) + vec3(1.0) * vState.x;

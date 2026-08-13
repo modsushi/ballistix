@@ -45,7 +45,7 @@ void main() {
   vec3 d = normalize(vDir);
 
   // Base vertical gradient — cold void above, a faint warm floor below.
-  float up = d.y * 0.5 + 0.5;
+  float up = clamp(d.y * 0.5 + 0.5, 0.0, 1.0);
   vec3 col = mix(uHorizon, uZenith, pow(up, 0.75));
 
   // Two nebula layers at different scales, warped by a third for filament
@@ -172,7 +172,7 @@ void main() {
   col += albedo * 0.045;                                   // ambient fill
 
   // Atmospheric limb: forward-scattered light hugging the silhouette.
-  float fres = pow(1.0 - max(dot(n, V), 0.0), 3.2);
+  float fres = pow(clamp(1.0 - dot(n, V), 0.0, 1.0), 3.2);
   float lit  = smoothstep(-0.55, 0.6, ndl);
   col += vec3(0.72, 0.42, 0.92) * fres * (0.18 + lit * 1.35);
 

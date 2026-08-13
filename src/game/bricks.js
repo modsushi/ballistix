@@ -234,7 +234,7 @@ export class BrickField {
           ${SURFACE}
           // Silhouette-only: a fresnel rim so the aura hugs the block's edge
           // instead of fogging its faces.
-          float fres = pow(1.0 - abs(dot(normalize(vNrm), vView)), 2.6);
+          float fres = pow(clamp(1.0 - abs(dot(normalize(vNrm), vView)), 0.0, 1.0), 2.6);
           float a = fres * (0.13 + hp * 0.11) + seam * 0.20 + slot * 0.26;
           a += crack * damage * 0.5 + flash * 0.85;
           a = clamp(a, 0.0, 1.0);

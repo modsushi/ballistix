@@ -130,7 +130,7 @@ export class Craft {
           float rim  = smoothstep(0.11,0.0,v) + smoothstep(0.90,1.0,v) * 0.6;
           // Ends taper so the field looks projected, not cut off.
           float ends = smoothstep(0.0,0.10,u) * smoothstep(1.0,0.90,u);
-          float fres = pow(1.0 - abs(dot(normalize(vN), vV)), 1.7);
+          float fres = pow(clamp(1.0 - abs(dot(normalize(vN), vV)), 0.0, 1.0), 1.7);
 
           float ripple = 0.5 + 0.5 * sin(u * 15.0 - uTime * 4.0);
           float a = (band * 0.30 + rim * 0.55 + fres * 0.45) * ends;

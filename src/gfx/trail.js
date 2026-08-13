@@ -25,7 +25,7 @@ void main() {
   side = len > 1e-4 ? side / len : vec3(1.0, 0.0, 0.0);
 
   // Tapered: full width at the head, pinched to nothing at the tail.
-  float w = uWidth * pow(1.0 - aT, 0.62) * (1.0 - 0.35 * aT);
+  float w = uWidth * pow(clamp(1.0 - aT, 0.0, 1.0), 0.62) * (1.0 - 0.35 * aT);
   vec3 p = position + side * aSide * w;
   gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
 }`;
@@ -38,9 +38,12 @@ uniform vec3 uColor;
 uniform vec3 uHot;
 uniform float uOpacity;
 void main() {
-  float across = 1.0 - abs(vEdge);            // 1 at the spine, 0 at the edges
+  // Clamped before every pow(): the interpolated edge/age values can overshoot
+  // their [0,1] range by an ulp at mediump, and pow() of a negative base is NaN
+  // — which is what turned the ribbon edges into black stipple on mobile.
+  float across = clamp(1.0 - abs(vEdge), 0.0, 1.0);  // 1 at the spine, 0 at the edges
   float body = pow(across, 1.6);
-  float fade = pow(1.0 - vT, 2.1);
+  float fade = pow(clamp(1.0 - vT, 0.0, 1.0), 2.1);
   // Hot core near the head cooling to the team colour down the tail.
   vec3 col = mix(uColor, uHot, body * (1.0 - vT * 0.75));
   float a = body * fade * uOpacity;
