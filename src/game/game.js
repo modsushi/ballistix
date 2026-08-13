@@ -1,11 +1,13 @@
 import * as THREE from 'three';
-import { ARC, ARENA, DIFFICULTY, ORB, PADDLE, PLAYERS, RULES } from '../core/config.js';
+import { ARC, ARENA, BRICKS, DIFFICULTY, ORB, PADDLE, PINBALL, PLAYERS, RULES } from '../core/config.js';
 import { clamp, damp, lerp, rand } from '../core/math.js';
 import { Arena } from './arena.js';
 import { Craft } from './craft.js';
 import { Orb } from './orb.js';
 import { AI } from './ai.js';
 import { Effects } from './effects.js';
+import { BrickField } from './bricks.js';
+import { Pinball } from './pinball.js';
 import { stepOrb, collideOrbs } from './collide.js';
 import { ArcField } from '../gfx/arcfield.js';
 import { POINTER_GAIN } from '../core/input.js';
@@ -17,6 +19,13 @@ import { POINTER_GAIN } from '../core/input.js';
  * on five points, conceding costs one, zero means your wall seals and your
  * craft is destroyed, and the last pilot with points on the board wins. Orbs
  * accumulate on a timer so the deck gets progressively less survivable.
+ *
+ * On top of that sits the middle game: a field of breakable bricks and four
+ * pinball wells. Points can now be *won* as well as lost — shattering bricks
+ * banks salvage for whoever last touched the orb, and every `BRICKS.perPoint`
+ * of it pays out a point. That turns a purely defensive game into one with a
+ * reason to aim, and slows the whole thing down, because an orb crossing the
+ * middle is knocked off course and bled of speed several times on the way.
  *
  * Physics runs on a fixed 120Hz step behind an accumulator. That is not
  * gold-plating: deflection angle depends on exactly where an orb meets a
@@ -51,6 +60,13 @@ export class Game {
 
     this.arena = new Arena(scene, assets, preset);
     this.effects = new Effects(scene, this.arena, camera, audio, preset);
+
+    // Pinball first: its elements are keep-out zones for the brick layout.
+    // Null when switched off in config, and everything downstream is written
+    // to cope with that rather than to construct a disabled copy — off should
+    // mean no geometry, no materials and no per-frame work at all.
+    this.pinball = PINBALL.enabled ? new Pinball(scene, preset) : null;
+    this.bricks = new BrickField(scene, preset);
 
     this.crafts = [];
     for (let i = 0; i < 4; i++) this.crafts.push(new Craft(i, PLAYERS[i], assets, scene));
@@ -120,9 +136,10 @@ export class Game {
     this.difficulty = difficulty;
 
     this.scores = PLAYERS.map(() => RULES.startPoints);
+    this.salvage = PLAYERS.map(() => 0);
     this.alive = [true, true, true, true];
     this.eliminationOrder = [];
-    this.stats = { deflections: 0, bestChain: 0, knockouts: 0, duration: 0 };
+    this.stats = { deflections: 0, bestChain: 0, knockouts: 0, bricks: 0, duration: 0 };
     this.chain = 0;
     this.matchTime = 0;
     this.playTime = 0;
@@ -155,6 +172,11 @@ export class Game {
     this.ais = [];
     for (let i = 0; i < 4; i++) this.ais[i] = new AI(this.crafts[i], diff, this.arena.planes);
 
+    // A fresh field every match. Laid out around the pinball elements, which
+    // never move, so only the bricks need re-rolling.
+    this.pinball?.reset();
+    this.bricks.reset(this.pinball?.obstacles() ?? []);
+
     for (let i = 0; i < 4; i++) {
       this.arena.setBarrierHealth(i, 1);
       this.hud.setScore(i, RULES.startPoints);
@@ -162,6 +184,7 @@ export class Game {
     this.hud.resetMatch();
     this.hud.setOrbCount(0);
     this.hud.setCombo(0);
+    this.hud.setSalvage(0, BRICKS.perPoint);
     this.effects.clear();
     this.arena.setCharge(0);
 
@@ -190,9 +213,13 @@ export class Game {
   targetOrbCount() {
     let n = 1;
     for (const s of RULES.orbSchedule) if (this.playTime >= s.t) n = s.n;
-    // With pilots eliminated the deck gets smaller; keep the pressure
-    // proportional rather than overwhelming the survivors.
-    return clamp(Math.min(n, this.maxOrbs), 1, Math.max(2, this.aliveCount));
+    // The deck gets smaller as pilots are eliminated, but the survivors get
+    // *one more* orb than they have rivals rather than fewer. Keeping the
+    // pressure strictly proportional was right when conceding was the only
+    // thing that moved the score; now that the middle both absorbs orbs and
+    // pays points out, a two-pilot endgame on two orbs reaches an equilibrium
+    // where salvage income cancels the goal drain and the match cannot end.
+    return clamp(Math.min(n, this.maxOrbs), 1, Math.max(2, this.aliveCount + 1));
   }
 
   activeOrbs() { return this.orbs.filter((o) => o.active); }
@@ -242,6 +269,7 @@ export class Game {
 
     // ---- presentation -------------------------------------------------------
     this._updateArcs(dt);
+    this._updateMiddle(dt);
     for (const c of this.crafts) c.update(dt, this.matchTime);
     for (const o of this.orbs) o.updateVisual(dt, this.matchTime);
     this.arena.aimFill(this.camera.cam.position);
@@ -269,7 +297,10 @@ export class Game {
     }
 
     // --- orbs ---------------------------------------------------------------
-    const ctx = { planes: this.arena.planes, crafts: this.crafts, events: ev };
+    const ctx = {
+      planes: this.arena.planes, crafts: this.crafts,
+      bricks: this.bricks, pinball: this.pinball, events: ev,
+    };
     for (const o of this.orbs) {
       if (!o.active) continue;
       stepOrb(o, h, ctx);
@@ -320,10 +351,59 @@ export class Game {
         this.effects.arcStrike(e);
         this.arcFields[e.craft.index].strike(e.u01, 0.9);
         break;
+      case 'brickhit':
+        this.effects.brickHit(e);
+        break;
+      case 'brickbreak':
+        this._brickBreak(e);
+        break;
+      case 'bumper':
+        this.effects.bumper(e);
+        break;
+      case 'sling':
+        this.effects.sling(e);
+        break;
       case 'goal':
         this._concede(e);
         break;
     }
+  }
+
+  /**
+   * A block shattered. Credit whoever last touched the orb, and pay out a
+   * point once they have banked enough.
+   *
+   * Salvage is banked rather than paid per brick because bricks break often —
+   * an orb crossing the field contacts one roughly every half second — and a
+   * point per brick would inflate faster than conceding could deflate. The
+   * match would then never be able to end, which is a worse failure than the
+   * mechanic being slightly less generous than it first sounds.
+   */
+  _brickBreak(e) {
+    this.effects.brickBreak(e);
+
+    const by = e.by;
+    if (by < 0 || !this.alive[by]) return;
+    if (by === 0) this.stats.bricks++;
+    if (this.attract) return;              // demo shows the spectacle, not the ledger
+
+    this.salvage[by]++;
+    if (by === 0) this.hud.setSalvage(this.salvage[0], BRICKS.perPoint);
+    if (this.salvage[by] < BRICKS.perPoint) return;
+
+    this.salvage[by] -= BRICKS.perPoint;
+    if (by === 0) this.hud.setSalvage(this.salvage[0], BRICKS.perPoint);
+
+    // A pilot already at the ceiling keeps the spectacle but banks nothing —
+    // the alternative is an unloseable lead and a match that cannot resolve.
+    if (this.scores[by] >= RULES.maxPoints) return;
+
+    this.scores[by]++;
+    this.hud.setScore(by, this.scores[by]);
+    this.arena.setBarrierHealth(by, Math.min(1, this.scores[by] / RULES.startPoints));
+    this.effects.salvagePoint(this.crafts[by]);
+    if (by === 0) this._say('SALVAGE\n+1 POINT', 1100);
+    else if (this.scores[by] > RULES.startPoints) this._say(`${PLAYERS[by].name} +1`, 800);
   }
 
   _concede(e) {
@@ -342,7 +422,9 @@ export class Game {
 
     this.scores[victim] = Math.max(0, this.scores[victim] - 1);
     this.hud.setScore(victim, this.scores[victim]);
-    this.arena.setBarrierHealth(victim, this.scores[victim] / RULES.startPoints);
+    // Salvage can push a pilot above the starting five; the barrier reads full
+    // rather than overcharged, so the deck never shows more than "healthy".
+    this.arena.setBarrierHealth(victim, Math.min(1, this.scores[victim] / RULES.startPoints));
     this.crafts[victim].onConcede();
     this.lastConceder = victim;
 
@@ -576,6 +658,38 @@ export class Game {
     this._arcWasReady = ready;
   }
 
+  /**
+   * The middle of the deck: blocks surfacing on the match clock, and the
+   * pinball wells running their own deploy cycle.
+   *
+   * Both announce themselves. A hazard that appears silently under a rally is
+   * indistinguishable from a bug — the player has to be told the rules of the
+   * deck changed, and told slightly before it happens.
+   */
+  _updateMiddle(dt) {
+    this.bricks.update(dt, this.playTime);
+    // One ring's worth of effect at most. The attract demo starts 40 seconds
+    // into the schedule and catches up several rings on its first frame; a dozen
+    // simultaneous swells is a wall of noise rather than an arrival.
+    const surfaced = this.bricks.justSpawned;
+    for (let i = 0; i < Math.min(surfaced.length, 4); i++) this.effects.brickSurface(surfaced[i]);
+    if (this.bricks.justSpawned.length && this.bricks.spawned === 1) {
+      this._say('BLOCKS SURFACING\nBREAK THEM FOR POINTS', 1700);
+    }
+
+    const p = this.pinball;
+    if (!p) return;
+    p.update(dt, this.matchTime);
+    if (p.justWarned) this.effects.pinballWarn(p);
+    if (p.justDeployed) {
+      this.effects.pinballDeploy(p);
+      this._say('BUMPERS UP', 1000);
+    }
+    if (p.justRetracted) this.effects.pinballRetract(p);
+
+    this.hud.setPinball(p.cycle01, p.live);
+  }
+
   // ------------------------------------------------------------------ polish --
   _updateCameraFocus(dtReal) {
     // Lean toward the busiest part of the deck, weighted by orb speed so the
@@ -625,6 +739,8 @@ export class Game {
 
   dispose() {
     for (const f of this.arcFields) f.dispose();
+    this.bricks.dispose();
+    this.pinball?.dispose();
     this.effects.dispose();
     for (const c of this.crafts) c.dispose();
     for (const o of this.orbs) o.dispose();

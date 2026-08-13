@@ -23,6 +23,10 @@
     <div class="wave-readout">
       <div class="wave-label">ORBS</div>
       <div class="wave-value" id="orbCount">1</div>
+      <div class="pin-meter" id="pinMeter">
+        <div class="pin-bar"><i id="pinFill"></i></div>
+        <span class="pin-word" id="pinWord">BUMPERS</span>
+      </div>
     </div>
   </div>
 
@@ -44,6 +48,13 @@
           </svg>
           <div class="arc-bar"><i id="arcFill"></i></div>
           <span class="arc-word" id="arcWord">ARC</span>
+        </div>
+        <div class="salv-meter" id="salvMeter">
+          <svg class="salv-icon" viewBox="0 0 14 14" aria-hidden="true">
+            <path d="M7 1.2 L12.2 4.4 L12.2 9.6 L7 12.8 L1.8 9.6 L1.8 4.4 Z"/>
+          </svg>
+          <div class="salv-bar"><i id="salvFill"></i></div>
+          <span class="salv-word">SALVAGE</span>
         </div>
       </div>
     </div>

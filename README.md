@@ -6,6 +6,15 @@ starts on five points. Let a plasma orb past you and you lose one. Hit zero and
 your wall seals shut and your craft is destroyed. Last pilot with points on the
 board wins.
 
+The deck starts bare and grows its own hazards. **Blocks** rise out of the floor
+one at a time as the match runs. Shattering one banks salvage for whoever last
+touched the orb, and enough salvage buys a point back — so points can be won as
+well as lost, and there is finally a reason to aim rather than just to survive.
+
+There is also a set of **pinball wells** — pop bumpers and slingshots that
+surface on a timer — built, tuned and tested but currently switched off behind
+`PINBALL.enabled`, so the brick field can be judged on its own.
+
 Built with three.js. Targets mobile web first: one WebGL2 context, no audio
 files, and a render pipeline that scales itself down rather than dropping
 frames.
@@ -100,6 +109,113 @@ different things:
 Whichever device you last actually used owns the paddle, so releasing an arrow
 key can't be hijacked by an idle cursor. Move the mouse and it takes over again.
 
+---
+
+## The middle game
+
+The deck used to be a straight line between two pilots, and it played fast in
+the bad way: an orb crossed it in under a second, arriving on a course you
+could read from the moment it left the other paddle. The middle now has things
+in it — but not from the opening whistle.
+
+**The deck escalates.** At kick-off it is bare, and the first exchange is the
+clean duel the game has always been. The first block surfaces at eight seconds
+and one more joins every five after that, so the field is complete around the
+ninety-second mark — by which point nothing crosses the middle unmolested.
+
+That arc is doing two jobs. It gives the match a shape — the same escalation
+the orb schedule provides, on a second axis — and it means someone who has
+never seen the game gets half a minute to learn what a deflection does before
+anything else is asked of them.
+
+### Bricks
+
+Sixteen blocks fill an annulus between radius 4.6 and 12.6 — clear of the serve
+point and well clear of the goal approach lanes. Every contact bounces the orb
+and takes 0.55 off its speed, which is the single biggest reason the game plays
+slower than it did.
+
+They arrive **one at a time**, in an order that walks the quadrants: block 0 of
+each quadrant, then block 1, and so on. Since the layout is four-fold symmetric,
+the field returns to perfect symmetry every fourth spawn and is never more than
+three blocks away from it.
+
+Blocks take two hits, or three toward the middle, and carry their damage
+visibly: a hairline seam and an outlined inset panel while healthy, then dark
+fissures that glow hotter as they go. A block wears the colour of the pilot who
+last struck it, so a glance at the middle tells you who has been farming it.
+
+Break one and whoever last touched the orb banks **salvage**. Every ten of those
+pays out a point, up to a ceiling of seven. Broken blocks reform after thirteen
+seconds, so the field erodes and grows back rather than being cleared once and
+gone — it settles at roughly a third to a half of the sixteen standing at any
+moment once the match is up to speed.
+
+> Bricks-per-point is the most load-bearing number in the rework. An orb
+> crossing a full field contacts a block roughly every half second, so paying a
+> point per brick would have inflated points faster than conceding could
+> deflate them. That is not a hypothetical: at nine — with the field standing
+> in full from the opening whistle — `playtest.mjs` produced a 260-second match
+> that never resolved, the last two pilots oscillating between four and eight
+> points for a hundred seconds because income exactly matched the drain. It
+> went to thirteen to fix that, and back to ten once the field shrank to
+> sixteen blocks arriving over ninety seconds. The ceiling exists for the same
+> reason: it stops a pilot farming an unloseable lead.
+
+### Pinball (currently switched off)
+
+Everything below is implemented and tested but disabled behind
+`PINBALL.enabled`. With the flag false nothing is constructed, nothing is added
+to the scene, no collision runs and the HUD readout is hidden — off means off,
+not a disabled copy sitting in the frame. Flip it to bring the wells back.
+
+Four chaos wells sit on the diagonals between the goals. Each is two pop
+bumpers with a slingshot standing behind them. An orb that wanders in rattles
+between the bumpers gaining speed until the slingshot fires it back across the
+deck at a flat 25.5 units/sec.
+
+They are **not permanent furniture**. They surface for fifteen seconds, sink,
+and stay down for fifteen more, forever, starting down. A well that is always
+there is a permanent tax on one region of the deck — you learn where it is and
+simply stop sending orbs that way. Something that comes and goes has to be
+replanned around every thirty seconds, and it gives the match a rhythm: a tense
+half where the middle is dangerous and a calm half where it is not. A ring
+contracting on the deck telegraphs the arrival about a second out, and the HUD
+carries the cycle as a bar next to the orb count — filling while they are down,
+draining while they are live.
+
+All four move together. One live well would quietly tax whichever pilot it sat
+in front of, and the fairness harness would read that as rule bias.
+
+They are on the diagonals for the same reason. A well in front of somebody's
+wall is a random goal generator; a well in the neutral corner is a feature you
+can aim into, avoid, or use to buy yourself time.
+
+Because they are speed *sources*, orbs above 19 units/sec now bleed speed at
+2.4 units/sec² until they settle back down. Without that sink the first orb to
+find a well pins itself at the speed cap and stays there for the rest of the
+match, which is precisely the game this rework is trying to get away from.
+Ordinary rallies never reach the threshold, so their escalation is untouched.
+
+### Fairness
+
+Both the brick layout and the well placement are **four-fold rotationally
+symmetric**: one quadrant is sampled by rejection, then copied at 90°, 180° and
+270°. Every seat faces an identical middle.
+
+That is a hard requirement, not an aesthetic one. `tools/balance.mjs` reads
+seat win rates as the signal for rule bias, and an asymmetric field would show
+up there as unfairness that no amount of tuning could ever remove. It also
+falls out conveniently: every copy is a quarter turn, so a block that starts
+axis-aligned stays axis-aligned and collision stays a circle-vs-AABB test.
+
+Because blocks surface one at a time, the field is only *exactly* symmetric
+every fourth spawn — the spawn order walks the quadrants specifically to keep
+the transient imbalance to at most three blocks and to make sure it never sits
+in front of the same pilot twice running. Surfacing a whole quadrant before
+starting the next would hand one seat a private obstacle course for a minute at
+a time.
+
 Screen-to-paddle mapping is projected against the camera at its *solved*
 framing, not the live one. The live camera leans toward the action and shakes
 on impact; mapping through it makes the paddle creep under a motionless cursor,
@@ -124,6 +240,7 @@ src/
     environment.js      procedural nebula baked to a cubemap; stars; gas giant
     floor.js            the deck — emissive energy layer inside a PBR material
     forcefield.js       goal barriers
+    shapes.js           procedural geometry: beveled slabs, bumpers, wedges
     trail.js            camera-facing ribbon for orb trails
     particles.js        one pooled Points system for every spark
     materials.js        Kenney material-name -> PBR retargeting
@@ -135,6 +252,8 @@ src/
     arena.js            deck, walls, barriers, substructure, set dressing
     craft.js            a pilot's paddle and everything that makes it feel good
     orb.js              the plasma orb
+    bricks.js           the breakable field: layout, damage, instanced render
+    pinball.js          pop bumpers and slingshots
     collide.js          substepped integration, contacts, AI prediction
     ai.js               rival pilots
     effects.js          events -> spectacle
@@ -145,12 +264,47 @@ src/
 
 ### Decisions worth knowing about
 
+**The deck is 19 units to a wall, not 13.6.** The brick field and the wells
+needed somewhere to live that wasn't a goal approach lane, and at the old size
+there was no such place. The chamfer grew with it (5.0 → 9.6) so the octagon
+stays close to regular — the diagonal walls are pinball surfaces now, and short
+ones barely participate. Goal lines grew only 9% against a 40% bigger deck, so
+defending is very nearly as hard as it was and everything else is travel time.
+
 **Physics runs at a fixed 120 Hz behind an accumulator.** Deflection angle
 depends on exactly where an orb meets a moving deflector. If that depended on a
 phone's variable frame time, identical inputs would produce different shots.
 Orb integration is additionally substepped so nothing travels more than 0.22
 world units per test — at 33 units/sec on a 30fps phone an unstepped orb moves
 1.1 units against a 0.92-unit-thick deflector and passes straight through it.
+
+**The whole brick field is two draw calls.** One instanced beveled slab drawn
+twice — an opaque PBR shell and an additive rim shell — with damage, hit flash
+and team tint carried on per-instance attributes and resolved in the shader.
+Chipping a block therefore costs one float, not a geometry rebuild, and the
+whole field adds two draw calls and about 4k triangles to the frame. The
+pinball furniture, when enabled, is three more instanced meshes on top.
+
+**Things arrive by rising out of the deck rather than fading in.** A block
+surfacing, and a pinball well deploying, are both a translation from below a
+floor that is already opaque — which costs nothing, hides the geometry
+perfectly, and gives the arrival its whole sense of mass for free. The wells'
+instance matrices are still written exactly once, at construction; only the
+parent mesh moves.
+
+The blocks are deliberately *dark*. An earlier pass lit their whole top face
+and the middle of the deck turned into a light table that the orb vanished
+into — the one object that must always be findable. They are now machined
+metal carrying a hairline seam and an outlined inset panel, and the only thing
+that ever gets brighter is damage.
+
+**The AI does not know the middle exists.** `predictArrival` still forward-
+simulates against the eight arena planes only, ignoring bricks, bumpers and
+other orbs — exactly as it always ignored paddles. Teaching it the field would
+mean a ray test against two dozen boxes per bounce per orb per pilot per tick, and it
+would make rivals eerily prescient about a region whose entire job is to be
+unpredictable. Every seat is misled identically, which is what the symmetry
+requirement buys.
 
 **The scene renders into a linear RGBA16F target and is tonemapped by our own
 composite pass.** three's tone mapping and output encoding are switched off in
@@ -205,11 +359,15 @@ Measured in-browser via `window.__ballistix.stats`:
 
 | | |
 | --- | --- |
-| Scene draw calls | ~86 |
-| Triangles | ~77k |
+| Scene draw calls | ~89 |
+| Triangles | ~81k |
 | Post passes | 12 |
-| Shader programs | ~43 |
+| Shader programs | ~49 |
 | Textures | 13 |
+
+The brick field costs two of those draw calls and about 4k triangles, which is
+the payoff for instancing it and for generating the geometry rather than
+placing sixteen props.
 
 Quality tiers are picked from touch/cores/memory plus the GPU renderer string
 (`core/quality.js`), and a governor trims internal resolution between 1.0 and
@@ -236,6 +394,7 @@ node tools/shot.mjs      <url> <outDir>      # menu/play/result at 4 viewports
 node tools/closeup.mjs   <url> <outDir> <z>  # zoomed craft & orb detail
 node tools/moments.mjs   <url> <outDir>      # concede, elimination, surge, low-health
 node tools/playtest.mjs  <url>               # drives a full match, asserts it resolves
+node tools/field.mjs     <url> <rolls>       # brick layout: symmetry, keep-outs, overlap
 node tools/controls.mjs  <url>               # steering: direction, range, tap/hold, hand-off
 node tools/framing.mjs   <url>               # where the arena lands in NDC, per viewport
 node tools/balance.mjs   <url> <n> <diff>    # seat-symmetry check
@@ -246,6 +405,16 @@ npm run models:sync                          # re-extract public/models from the
 rules are fair, wins spread evenly across the four seats; a seat that
 consistently wins or loses means the geometry, serve logic or targeting weights
 are biased rather than that one pilot is better.
+
+`field.mjs` re-rolls the brick layout a few dozen times and asserts the
+properties the rules depend on: four-fold rotational symmetry, nothing in the
+serve keep-out or the goal approach lanes, no overlaps, and a field that
+actually filled. The layout is random per match, so eyeballing one of them is
+not evidence of anything.
+
+`playtest.mjs` samples the live brick count and every pilot's salvage bank
+alongside the scores. A field that never erodes and a bank that never pays out
+are both pacing bugs that look perfectly fine in a screenshot.
 
 Debug URL parameters: `?tier=0|1|2` forces a quality tier, `?dpr=` overrides
 device pixel ratio, `?zoom=` scales camera distance, `?auto=1` hands pilot 0 to

@@ -58,15 +58,25 @@ while (Date.now() < deadline) {
     let targetX = null;
     if (live.length) {
       // Threat = the orb heading at us soonest, straight-line (no bounces),
-      // which is roughly what an average player tracks.
+      // which is roughly what an average player tracks. The paddle plane is
+      // read off the craft rather than hard-coded — it moved when the deck was
+      // widened for the brick field, and a stale constant here doesn't fail
+      // loudly, it just quietly makes the harness play like a bad player.
+      const plane = g.crafts[0].standoffDist;
       let best = null, bt = 1e9;
       for (const o of live) {
         if (o.vz <= 0.01) continue;
-        const t = (11.15 - o.z) / o.vz;
+        const t = (plane - o.z) / o.vz;
         if (t > 0 && t < bt) { bt = t; best = o; }
       }
       const o = best || live.reduce((a, b) => (b.z > a.z ? b : a));
-      const wantU = best ? best.x + best.vx * bt : o.x;
+      const wantX = best ? best.x + best.vx * bt : o.x;
+      // Project onto the craft's own wall tangent. `u` is not an x coordinate:
+      // for the south wall the tangent is -X, so feeding x straight in aims the
+      // paddle *away* from the orb and the harness quietly plays a match as the
+      // worst player alive.
+      const c = g.crafts[0];
+      const wantU = wantX * c.tx + plane * c.tz;
 
       // Invert the game's own screen->paddle mapping. It is linear, so two
       // probes fully determine it; using the real mapper keeps the test from
@@ -79,6 +89,10 @@ while (Date.now() < deadline) {
     return {
       state: g.state, scores: g.scores.slice(), alive: g.alive.slice(),
       orbs: live.length, playTime: +g.playTime.toFixed(1),
+      // The middle is now a point source, so it gets sampled too: a field that
+      // never erodes and a salvage bank that never pays are both pacing bugs
+      // that look fine in a screenshot.
+      bricks: g.bricks.liveCount, salvage: g.salvage.slice(),
       chain: g.chain, surge: +g.crafts[0].surge.toFixed(2),
       resultOpen: !document.getElementById('result').classList.contains('hidden'),
       targetX,
@@ -114,7 +128,9 @@ const final = await page.evaluate(() => {
 console.log('\n--- pacing ---');
 for (let i = 0; i < samples.length; i += 60) {
   const s = samples[i];
-  console.log(`t=${String(s.playTime).padStart(6)}  ${s.state.padEnd(6)} orbs=${s.orbs} scores=${JSON.stringify(s.scores)} chain=${s.chain}`);
+  console.log(`t=${String(s.playTime).padStart(6)}  ${s.state.padEnd(6)} orbs=${s.orbs}`
+    + ` scores=${JSON.stringify(s.scores)} salvage=${JSON.stringify(s.salvage)}`
+    + ` bricks=${s.bricks} chain=${s.chain}`);
 }
 
 console.log('\n--- final ---');

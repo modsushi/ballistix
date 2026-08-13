@@ -2,10 +2,23 @@
  * Central tuning. Everything that a designer would want to twist lives here.
  */
 
-// --- arena geometry (a square with chamfered corners: 4 goals, 4 bumpers) ---
+/**
+ * --- arena geometry (a square with chamfered corners: 4 goals, 4 bumpers) ---
+ *
+ * The deck was widened from 13.6 to 19.0 to make room for the brick field and
+ * the pinball wells. That is not decoration: the middle is where the game now
+ * happens, and at the old size anything placed there sat in the goal approach
+ * lanes. The chamfer grew with it (5.0 -> 9.6) so the octagon stays close to
+ * regular rather than becoming a square with nicked corners — the diagonal
+ * walls are the pinball surfaces, and short ones barely participate.
+ *
+ * Goal lines grew only 9% (17.2 -> 18.8) while the deck grew 40%, so a pilot's
+ * job is very nearly as hard as it was; everything else is travel time, which
+ * is exactly the pacing this rework is buying.
+ */
 export const ARENA = {
-  half: 13.6,       // half-width of the square, centre -> goal wall
-  chamfer: 5.0,     // how much of each corner is cut away
+  half: 19.0,       // half-width of the square, centre -> goal wall
+  chamfer: 9.6,     // how much of each corner is cut away
   wallH: 2.9,       // visual wall height
   floorY: 0,
   playY: 0.92,      // the plane everything moves on
@@ -28,6 +41,20 @@ export const PLAYERS = [
 
 export const RULES = {
   startPoints: 5,
+  /**
+    * Ceiling on salvaged points. Bricks are the only way to gain points, and
+    * without a cap a pilot who farms the middle can bank an unloseable lead
+    * while the match quietly stops being able to end. Seven leaves real room
+    * to build (+40%) and still puts every pilot inside a bad minute of being
+    * in trouble.
+    *
+    * Measured, not guessed: at eight, `tools/playtest.mjs` produced a 260s
+    * match that never resolved, with the last two pilots oscillating between
+    * four and eight for a hundred seconds because salvage income matched the
+    * goal drain exactly. See `BRICKS.perPoint` and `targetOrbCount` — all
+    * three were pulled back together.
+    */
+  maxPoints: 7,
   /**
     * Orb count over elapsed play time. Paced so a rally has room to develop
     * before the next orb lands — arriving too fast turns the deck from a duel
@@ -115,13 +142,161 @@ export const ARC = {
 
 export const ORB = {
   radius: 0.52,
-  baseSpeed: 14.5,
+  baseSpeed: 13.2,
   maxSpeed: 33,
   rallyGain: 0.34,    // speed added per deflection
   paddleBoost: 1.05,  // extra on a player deflection
   spinInfluence: 0.26,// how much paddle velocity curves the return
   angleInfluence: 0.78,
   minAngle: 0.30,     // rad; keeps orbs from crawling along a wall
+
+  /**
+    * Speed bleed. Above `cruise` an orb sheds `bleed` units/sec² until it
+    * settles back down; below it, nothing happens.
+    *
+    * This exists because the pinball wells are speed *sources*. Without a sink
+    * the first orb to find a bumper cluster pins itself at `maxSpeed` and stays
+    * there for the rest of the match, and four of those is the fast, unreadable
+    * game this rework is trying to get away from. The threshold is set above
+    * normal rally speeds so an ordinary exchange is untouched — only bumper
+    * energy decays, which makes a kicked orb a passing danger you wait out
+    * rather than a permanent change to the match.
+    */
+  cruise: 19,
+  bleed: 2.4,
+};
+
+/**
+ * The brick field.
+ *
+ * A ring of breakable blocks filling the middle of the deck. They do three
+ * things at once: they slow orbs down on contact, they scatter shots so the
+ * lane between two goals is never straight for long, and they are the only
+ * source of points in the game — shatter one and whoever last touched the orb
+ * banks salvage.
+ *
+ * The layout is regenerated every match but always laid out with four-fold
+ * rotational symmetry, so every seat faces exactly the same field. That is a
+ * hard requirement rather than an aesthetic one: `tools/balance.mjs` reads seat
+ * win rates to detect rule bias, and an asymmetric field would show up there as
+ * unfairness that no amount of tuning could remove.
+ */
+export const BRICKS = {
+  perQuadrant: 4,     // total = 4x this
+
+  /**
+    * The deck starts **empty** and grows its own hazards.
+    *
+    * Blocks rise out of the floor one at a time. This is the pacing arc: the
+    * opening is the clean duel the game has always been, and by ninety seconds
+    * the middle is a cluttered obstacle course that no shot crosses unmolested.
+    * Escalating the deck rather than starting cluttered also keeps the first
+    * half-minute readable for someone who has never seen the game.
+    *
+    * The spawn *order* walks the quadrants — block 0 of each quadrant, then
+    * block 1, and so on. The layout is four-fold symmetric, so this means the
+    * field returns to perfect symmetry every four spawns and is never more than
+    * three blocks away from it. That matters because `tools/balance.mjs` reads
+    * seat win rates as the signal for rule bias; surfacing all of one quadrant
+    * before starting the next would hand one pilot a private obstacle course
+    * for a minute at a time.
+    */
+  spawnFirst: 8,      // seconds of play before the first block rises
+  spawnEvery: 5,      // seconds between blocks
+  w: 2.35,            // long axis
+  d: 1.18,            // short axis
+  h: 1.3,             // height above the deck — the orb plane sits ~70% up it
+  bevel: 0.11,
+
+  innerR: 4.6,        // keep-out around the serve point
+  outerR: 12.6,       // stay well clear of the goal approach lanes
+  minGap: 0.72,       // clear space between neighbouring blocks
+  wellClear: 2.0,     // clear space around a pinball element — wide enough for
+                      // an orb to pass between the two when they deploy
+
+  /** Hit points by radius: tougher toward the middle, so the core is a prize. */
+  hpInner: 3,
+  hpOuter: 2,
+  hpSplit: 8.4,       // radius where the inner band ends
+
+  slow: 0.55,         // speed shed per contact — bricks are the pacing brake
+  /**
+    * Bricks shattered per point awarded. The single most load-bearing number
+    * here: bricks break often (an orb crossing the field contacts one roughly
+    * every half second), so paying out a point per brick would inflate faster
+    * than goals could deflate and matches would stop resolving. Salvage banks
+    * the breaks and pays out rarely, which keeps the faucet well under the
+    * drain while still making every shatter feel like progress.
+    *
+    * Ten. It was nine when the field was 28 blocks standing from the opening
+    * whistle, and that stopped matches resolving once they were down to two
+    * pilots — goals get rarer as pilots are eliminated while the field pays out
+    * at exactly the same rate. It went to thirteen to fix that, and back to ten
+    * once the field was cut to sixteen blocks that arrive over the first ninety
+    * seconds, which cut income far more than the ratio ever did. Measured with
+    * `tools/playtest.mjs` at every step.
+    */
+  perPoint: 10,
+  regen: 13,          // seconds a shattered block stays down
+  reformTime: 0.85,   // seconds to fade and scale back in
+  breakTime: 0.42,    // seconds of shatter animation
+};
+
+/**
+ * Pinball furniture: four "chaos wells", one per quadrant, sitting on the
+ * diagonals between the goals.
+ *
+ * Each well is two pop bumpers with a slingshot behind them. An orb that
+ * wanders in rattles between the bumpers, gaining speed, until the slingshot
+ * fires it back across the deck. Deliberately placed off the goal axes — a
+ * well in front of someone's wall would be a random goal generator rather than
+ * a feature you can play around.
+ */
+export const PINBALL = {
+  /**
+    * Master switch, currently **off**. The wells are built, tuned and tested,
+    * but the deck is being played without them for now so the brick field can
+    * be judged on its own. With this false nothing is constructed, nothing is
+    * added to the scene and no collision runs; flip it to bring them back.
+    */
+  enabled: false,
+
+  /**
+    * The wells are not permanent furniture — they surface, run, and sink
+    * again. Fifteen seconds up, fifteen down, forever, starting *down* so the
+    * opening exchange is played on a clean deck.
+    *
+    * A cycle rather than a fixture because a permanent pinball well is a
+    * permanent tax on one region of the deck: you learn where it is and simply
+    * never send an orb there. Something that comes and goes has to be replanned
+    * around every thirty seconds, and it gives the match a rhythm — a tense
+    * half where the middle is dangerous, and a calm half where it is not.
+    *
+    * All four wells move together, which keeps the deck symmetric at every
+    * instant; one live well would quietly tax whichever pilot it sat in front
+    * of, and `tools/balance.mjs` would read that as rule bias.
+    */
+  upTime: 15,         // seconds deployed
+  downTime: 15,       // seconds retracted before the next deployment
+  warnTime: 1.1,      // telegraph before they punch up through the deck
+  riseTime: 0.55,     // seconds to travel up or down
+
+  wellR: 10.4,        // distance from centre to the bumper pair
+  bumperGap: 1.62,    // tangential offset of each bumper from the well axis
+  bumperR: 0.95,
+  bumperH: 1.55,      // tapered so its true radius lands on the orb's own plane
+
+  kick: 3.4,          // speed added per bumper pop
+  kickFloor: 17,      // a pop never leaves an orb slower than this
+  scatter: 0.16,      // rad of random spray, so a well never loops forever
+
+  slingBack: 2.35,    // how far behind the bumpers the slingshot face sits
+  slingHalf: 2.2,     // half-length of the face
+  slingH: 1.05,       // kept low: it is furniture, not a wall
+  slingDepth: 1.35,   // collider depth; the wedge is solid, not just a face
+  slingSpeed: 25.5,   // the face fires at a fixed speed, pinball-style
+  slingSpread: 0.62,  // how much contact offset angles the shot
+  cool: 0.09,         // seconds before the same element can fire again
 };
 
 /**

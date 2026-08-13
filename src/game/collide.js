@@ -31,14 +31,14 @@ function unstick(vx, vz, nx, nz, speed) {
 /**
  * @param {object} o        orb
  * @param {number} dt
- * @param {object} ctx      { planes, crafts, events }
+ * @param {object} ctx      { planes, crafts, bricks, pinball, events }
  *
  * `events` collects { type, ... } records for the caller to turn into audio,
  * particles and score changes. Keeping resolution free of side effects makes
  * the substep loop safe to run many times per frame.
  */
 export function stepOrb(o, dt, ctx) {
-  const { planes, crafts, events } = ctx;
+  const { planes, crafts, bricks, pinball, events } = ctx;
 
   let remaining = dt;
   let guard = 0;
@@ -49,6 +49,17 @@ export function stepOrb(o, dt, ctx) {
 
     o.x += o.vx * step;
     o.z += o.vz * step;
+
+    // ---- speed bleed -----------------------------------------------------
+    // The pinball wells inject speed; this is the only thing taking it back
+    // out. Applied per substep so it is frame-rate independent, and only
+    // above `cruise` so ordinary rallies keep their escalation intact.
+    if (speed > ORB.cruise) {
+      const shed = Math.max(ORB.cruise, speed - ORB.bleed * step);
+      const k = shed / speed;
+      o.vx *= k; o.vz *= k;
+      o.speed = shed;
+    }
 
     // ---- lightning fences ------------------------------------------------
     // Checked before paddles: while a pilot's fence is up it spans their whole
@@ -150,6 +161,13 @@ export function stepOrb(o, dt, ctx) {
       });
       break;
     }
+
+    // ---- the middle: bricks, then pinball --------------------------------
+    // Both live well inside the goal approach lanes, so their order against
+    // the paddles and walls never matters; bricks go first only because they
+    // are the more common contact by an order of magnitude.
+    if (bricks) bricks.collide(o, events);
+    if (pinball) pinball.collide(o, events);
 
     // ---- walls & goals ---------------------------------------------------
     for (const p of planes) {

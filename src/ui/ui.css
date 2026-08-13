@@ -19,6 +19,7 @@
 
   --danger: #ff3b4e;
   --gold:   #ffd76e;
+  --salv:   #ffc94a;   /* salvaged points — the only thing on the HUD that grows */
 
   /* --- glass --------------------------------------------------------- */
   --glass:      rgba(12, 20, 36, 0.58);
@@ -326,6 +327,21 @@ body::after {
 }
 .pip.spent { background: rgba(120, 160, 200, 0.16); box-shadow: none; transform: scaleY(0.42); }
 
+/* Points salvaged above the starting five: narrower, gold, unmistakably extra. */
+.pip.bonus {
+  flex: 0 0 auto; width: 4px;
+  background: var(--salv);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--salv) 75%, transparent);
+}
+.pip.bonus.spent { background: rgba(120, 160, 200, 0.10); box-shadow: none; }
+
+.pod.gain { animation: podGain 0.55s var(--ease-out); }
+@keyframes podGain {
+  0%   { transform: translateY(0); }
+  30%  { transform: translateY(-4px) scale(1.03); filter: brightness(1.5); }
+  100% { transform: translateY(0); }
+}
+
 .pod.hit { animation: podHit 0.5s var(--ease-out); }
 @keyframes podHit {
   0%   { transform: translateX(0); }
@@ -345,6 +361,32 @@ body::after {
   font-variant-numeric: tabular-nums;
   text-shadow: 0 0 16px rgba(120, 200, 255, 0.5);
 }
+/* Deck state, not personal state, so it lives with the orb count rather than
+   in the player's own pod: the wells belong to everybody. */
+.pin-meter {
+  display: flex; flex-direction: column; align-items: flex-end; gap: 3px;
+  margin-top: 6px; --pin: #ffa832;
+}
+.pin-bar {
+  width: clamp(46px, 13vw, 66px); height: 3px;
+  background: rgba(90, 140, 190, 0.16);
+  clip-path: polygon(2px 0, 100% 0, calc(100% - 2px) 100%, 0 100%);
+  overflow: hidden;
+}
+.pin-bar i {
+  display: block; height: 100%; width: 0%;
+  background: linear-gradient(90deg, #7a4a10, var(--pin));
+  transition: width 0.2s linear;
+}
+.pin-word {
+  font-size: 7.5px; font-weight: 700;
+  letter-spacing: 0.16em; text-indent: 0.16em;
+  color: var(--ink-faint);
+  transition: color 0.3s var(--ease-out);
+}
+.pin-meter.live .pin-word { color: var(--pin); text-shadow: 0 0 10px var(--pin); }
+.pin-meter.live .pin-bar i { background: var(--pin); box-shadow: 0 0 8px var(--pin); }
+
 .wave-value.bump { animation: bump 0.55s var(--ease-snap); }
 @keyframes bump { 0% { transform: scale(1); } 35% { transform: scale(1.45); color: var(--p0); } 100% { transform: scale(1); } }
 
@@ -416,6 +458,50 @@ body::after {
   color: var(--ink-faint);
   min-width: 4.2em;
   transition: color 0.3s var(--ease-out);
+}
+
+/* --- salvage ---------------------------------------------------------- */
+/* Deliberately the arc meter's twin: same geometry, gold instead of cyan.
+   One is what you can spend, the other is what you are banking. */
+.salv-meter {
+  display: flex; align-items: center; gap: 6px;
+  width: clamp(70px, 22vw, 108px);
+}
+.salv-icon {
+  width: 9px; height: 11px; flex: none;
+  fill: none; stroke: var(--salv); stroke-width: 1.5;
+  opacity: 0.55;
+  transition: opacity 0.3s var(--ease-out);
+}
+.salv-bar {
+  flex: 1; height: 3px;
+  background: rgba(90, 140, 190, 0.16);
+  clip-path: polygon(2px 0, 100% 0, calc(100% - 2px) 100%, 0 100%);
+  overflow: hidden;
+}
+.salv-bar i {
+  display: block; height: 100%; width: 0%;
+  background: linear-gradient(90deg, #7a5310, var(--salv));
+  transition: width 0.28s var(--ease-out);
+}
+.salv-word {
+  font-size: 7.5px; font-weight: 700;
+  letter-spacing: 0.16em; text-indent: 0.16em;
+  color: var(--ink-faint);
+  min-width: 4.2em;
+}
+.salv-meter.paid .salv-icon { opacity: 1; }
+.salv-meter.paid { animation: salvPaid 0.6s var(--ease-out); }
+@keyframes salvPaid {
+  0%   { filter: brightness(2.4) drop-shadow(0 0 10px var(--salv)); }
+  100% { filter: none; }
+}
+
+.self-num.gain { animation: numGain 0.6s var(--ease-out); }
+@keyframes numGain {
+  0%   { transform: scale(1); color: #fff; }
+  25%  { transform: scale(1.32); color: var(--salv); text-shadow: 0 0 26px var(--salv); }
+  100% { transform: scale(1); color: #fff; }
 }
 
 /* Charged: the whole module lights up and breathes. The craft's own deflector

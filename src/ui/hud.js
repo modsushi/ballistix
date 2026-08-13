@@ -1,4 +1,4 @@
-import { PLAYERS, RULES } from '../core/config.js';
+import { BRICKS, PINBALL, PLAYERS, RULES } from '../core/config.js';
 
 /**
  * DOM-side interface. Kept entirely out of the WebGL layer.
@@ -27,6 +27,11 @@ export class HUD {
       arcMeter: el('arcMeter'),
       arcFill: el('arcFill'),
       arcWord: el('arcWord'),
+      salvMeter: el('salvMeter'),
+      salvFill: el('salvFill'),
+      pinMeter: el('pinMeter'),
+      pinFill: el('pinFill'),
+      pinWord: el('pinWord'),
       combo: el('combo'),
       comboNum: el('combo').querySelector('b'),
       boot: el('boot'),
@@ -50,9 +55,32 @@ export class HUD {
     this._combo = -1;
     this._arc = -1;
     this._arcState = '';
+    this._salv = -1;
+    this._pin = -1;
+    this._pinLive = null;
     this._announceTimer = null;
+    // No readout for furniture that isn't in the match.
+    if (!PINBALL.enabled) this.dom.pinMeter.style.display = 'none';
     this._buildPods();
     this._setControlHint();
+  }
+
+  /**
+   * Pips run to `maxPoints`, not to the five everyone starts on: salvage can
+   * push a pilot above the starting line, and a meter that can only ever go
+   * down would hide the single most interesting thing on the board. The slots
+   * past five are narrower and gold, so "banked" reads differently from "still
+   * holding what I was given" at a glance.
+   */
+  _pipStrip(wrap) {
+    const pips = [];
+    for (let k = 0; k < RULES.maxPoints; k++) {
+      const s = document.createElement('i');
+      s.className = k >= RULES.startPoints ? 'pip bonus' : 'pip';
+      wrap.appendChild(s);
+      pips.push(s);
+    }
+    return pips;
   }
 
   _buildPods() {
@@ -66,28 +94,13 @@ export class HUD {
       pod.className = 'pod';
       pod.style.setProperty('--c', p.css);
       pod.innerHTML = `<div class="pod-name">${p.name}</div><div class="pips"></div>`;
-      const pipWrap = pod.querySelector('.pips');
-      const pips = [];
-      for (let k = 0; k < RULES.startPoints; k++) {
-        const s = document.createElement('i');
-        s.className = 'pip';
-        pipWrap.appendChild(s);
-        pips.push(s);
-      }
       this.dom.rivals.appendChild(pod);
       this.pods[i] = pod;
-      this.pips[i] = pips;
+      this.pips[i] = this._pipStrip(pod.querySelector('.pips'));
     }
 
     this.dom.selfPips.innerHTML = '';
-    const own = [];
-    for (let k = 0; k < RULES.startPoints; k++) {
-      const s = document.createElement('i');
-      s.className = 'pip';
-      this.dom.selfPips.appendChild(s);
-      own.push(s);
-    }
-    this.pips[0] = own;
+    this.pips[0] = this._pipStrip(this.dom.selfPips);
     this.pods[0] = el('selfPod');
   }
 
@@ -135,9 +148,11 @@ export class HUD {
   }
 
   // ------------------------------------------------------------------ hud --
-  setScore(index, value, max = RULES.startPoints) {
+  setScore(index, value, max = RULES.maxPoints) {
     if (this._scores[index] === value) return;
-    const dropped = value < this._scores[index] && this._scores[index] >= 0;
+    const prev = this._scores[index];
+    const dropped = value < prev && prev >= 0;
+    const gained = value > prev && prev >= 0;
     this._scores[index] = value;
 
     const pips = this.pips[index];
@@ -146,10 +161,28 @@ export class HUD {
     if (index === 0) {
       this.dom.selfScore.textContent = String(value);
       this.dom.selfArc.style.strokeDashoffset = String(ARC_LEN * (1 - value / max));
-      this.dom.selfArc.style.stroke = value <= 1 ? 'var(--danger)' : 'var(--p0)';
-      if (dropped) this._replay(this.dom.selfScore, 'hit');
+      this.dom.selfArc.style.stroke = value <= 1 ? 'var(--danger)'
+        : value > RULES.startPoints ? 'var(--salv)' : 'var(--p0)';
+      if (dropped || gained) this._replay(this.dom.selfScore, dropped ? 'hit' : 'gain');
     }
     if (dropped) this._replay(this.pods[index], 'hit');
+    else if (gained) this._replay(this.pods[index], 'gain');
+  }
+
+  /**
+   * Salvage banked toward the next point.
+   *
+   * @param {number} value  blocks shattered since the last payout
+   * @param {number} per    blocks needed for a point
+   */
+  setSalvage(value, per) {
+    const pct = Math.round(Math.min(1, value / per) * 100);
+    if (pct === this._salv) return;
+    // A payout resets to zero; flash the meter rather than letting the bar
+    // silently snap back, which reads as a bug.
+    if (pct < this._salv) this._replay(this.dom.salvMeter, 'paid');
+    this._salv = pct;
+    this.dom.salvFill.style.width = `${pct}%`;
   }
 
   markEliminated(index) {
@@ -197,6 +230,28 @@ export class HUD {
     this.dom.arcWord.textContent = live ? 'LIVE' : ready ? 'READY' : 'ARC';
   }
 
+  /**
+   * The pinball wells' deploy cycle.
+   *
+   * One bar doing double duty: it fills while they are retracted and about to
+   * arrive, and drains while they are live. Either way the bar is time you can
+   * plan around, which is the only reason a cycling hazard is fair.
+   *
+   * @param {number} value 0..1
+   * @param {boolean} live currently deployed
+   */
+  setPinball(value, live) {
+    const pct = Math.round(value * 100);
+    if (pct !== this._pin) {
+      this._pin = pct;
+      this.dom.pinFill.style.width = `${pct}%`;
+    }
+    if (live === this._pinLive) return;
+    this._pinLive = live;
+    this.dom.pinMeter.classList.toggle('live', live);
+    this.dom.pinWord.textContent = live ? 'LIVE' : 'BUMPERS';
+  }
+
   announce(text, hold = 1500) {
     this.dom.announceText.textContent = text;
     this.dom.announce.classList.remove('show');
@@ -227,6 +282,11 @@ export class HUD {
     this._arc = -1;
     this._arcState = '';
     this.setArc(0, false, false);
+    this._salv = -1;
+    this.setSalvage(0, BRICKS.perPoint);
+    this._pin = -1;
+    this._pinLive = null;
+    this.setPinball(0, false);
   }
 
   // --------------------------------------------------------------- result --
@@ -262,6 +322,7 @@ export class HUD {
     this.dom.matchStats.innerHTML = `
       <div class="stat"><b>${s.deflections}</b><i>DEFLECTIONS</i></div>
       <div class="stat"><b>${s.bestChain}</b><i>BEST CHAIN</i></div>
+      <div class="stat"><b>${s.bricks}</b><i>BLOCKS BROKEN</i></div>
       <div class="stat"><b>${s.knockouts}</b><i>KNOCKOUTS</i></div>
       <div class="stat"><b>${this._fmtTime(s.duration)}</b><i>DURATION</i></div>`;
 

@@ -327,6 +327,288 @@ export class Audio {
     }
   }
 
+  // --------------------------------------------------------------- bricks --
+
+  /**
+   * A block chipped. The most frequent sound in the game by some margin, so it
+   * is deliberately small, short and *dark* — a bright click at this rate
+   * becomes exhausting inside a minute.
+   *
+   * @param {number} speed01 orb speed, adds bite
+   * @param {number} hp01    remaining integrity — a damaged block rings lower
+   *                         and shorter, which is the audible half of the
+   *                         cracks appearing on its shell
+   */
+  brickHit(speed01 = 0.5, hp01 = 1) {
+    if (!this.ready || this.muted) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const base = lerp(150, 260, hp01) * lerp(0.94, 1.12, speed01);
+
+    const o = ctx.createOscillator();
+    o.type = 'triangle';
+    o.frequency.setValueAtTime(base * 2.0, t);
+    o.frequency.exponentialRampToValueAtTime(base, t + 0.05);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.13 * lerp(0.7, 1, hp01), t + 0.003);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.07 + hp01 * 0.06);
+    o.connect(g); g.connect(this.sfx);
+    o.start(t); o.stop(t + 0.16);
+
+    // Grit: a very short bandpassed crack that tracks impact speed.
+    const n = this._noise(0.05, t);
+    const f = ctx.createBiquadFilter();
+    f.type = 'bandpass'; f.Q.value = 1.1;
+    f.frequency.value = lerp(900, 2200, speed01);
+    const ng = ctx.createGain();
+    ng.gain.setValueAtTime(0.085, t);
+    ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
+    n.connect(f); f.connect(ng); ng.connect(this.sfx);
+  }
+
+  /**
+   * A block destroyed: a ceramic shatter. Inharmonic partials scattered around
+   * a root (so it reads as breaking rather than as a note), a noise burst with
+   * a falling filter for the debris, and a small thump underneath for weight.
+   */
+  brickBreak(maxHp = 2) {
+    if (!this.ready || this.muted) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    // Tougher blocks break lower — a three-hit block should sound like it took
+    // three hits to get here.
+    const root = maxHp >= 3 ? 300 : 390;
+
+    for (const [mult, gain, dur] of [[1, 0.13, 0.34], [2.41, 0.09, 0.26], [4.17, 0.055, 0.20], [6.8, 0.03, 0.15]]) {
+      const o = ctx.createOscillator();
+      o.type = 'sine';
+      o.frequency.value = root * mult * rand(0.93, 1.08);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(gain, t + 0.002);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      o.connect(g); g.connect(this.sfx);
+      o.start(t); o.stop(t + dur + 0.02);
+    }
+
+    const n = this._noise(0.3, t);
+    const f = ctx.createBiquadFilter();
+    f.type = 'bandpass'; f.Q.value = 0.8;
+    f.frequency.setValueAtTime(3400, t);
+    f.frequency.exponentialRampToValueAtTime(420, t + 0.28);
+    const ng = ctx.createGain();
+    ng.gain.setValueAtTime(0.20, t);
+    ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+    n.connect(f); f.connect(ng); ng.connect(this.sfx);
+
+    const sub = ctx.createOscillator();
+    sub.type = 'sine';
+    sub.frequency.setValueAtTime(110, t);
+    sub.frequency.exponentialRampToValueAtTime(46, t + 0.2);
+    const sg = ctx.createGain();
+    sg.gain.setValueAtTime(0, t);
+    sg.gain.linearRampToValueAtTime(0.2, t + 0.006);
+    sg.gain.exponentialRampToValueAtTime(0.0001, t + 0.26);
+    sub.connect(sg); sg.connect(this.sfx);
+    sub.start(t); sub.stop(t + 0.3);
+  }
+
+  /** Salvage paying out a point: a bright rising triad over a soft duck. */
+  salvage() {
+    if (!this.ready || this.muted) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    this.duck(0.45, 0.55);
+    [0, 7, 12].forEach((n, i) => {
+      const st = t + i * 0.065;
+      const o = ctx.createOscillator();
+      o.type = 'triangle';
+      o.frequency.value = semi(n + 12);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, st);
+      g.gain.linearRampToValueAtTime(0.11, st + 0.006);
+      g.gain.exponentialRampToValueAtTime(0.0001, st + 0.36);
+      const f = ctx.createBiquadFilter();
+      f.type = 'lowpass'; f.frequency.value = 5000;
+      o.connect(f); f.connect(g); g.connect(this.sfx);
+      o.start(st); o.stop(st + 0.38);
+    });
+  }
+
+  /** A block rising out of the deck: a short upward swell, no transient. */
+  brickSurface() {
+    if (!this.ready || this.muted) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const o = ctx.createOscillator();
+    o.type = 'triangle';
+    o.frequency.setValueAtTime(90, t);
+    o.frequency.exponentialRampToValueAtTime(280 * rand(0.94, 1.08), t + 0.26);
+    const g = ctx.createGain();
+    // Swelling in rather than clicking in is the whole idea: four of these
+    // land together, and four transients at once is a machine-gun burst.
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.075, t + 0.14);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.42);
+    const f = ctx.createBiquadFilter();
+    f.type = 'lowpass'; f.frequency.value = 1800;
+    o.connect(f); f.connect(g); g.connect(this.sfx);
+    o.start(t); o.stop(t + 0.45);
+  }
+
+  // -------------------------------------------------------------- pinball --
+
+  /** Telegraph: a mechanical clunk with something spinning up under it. */
+  pinballWarn() {
+    if (!this.ready || this.muted) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const o = ctx.createOscillator();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(58, t);
+    o.frequency.exponentialRampToValueAtTime(180, t + 0.9);
+    const f = ctx.createBiquadFilter();
+    f.type = 'lowpass'; f.Q.value = 6;
+    f.frequency.setValueAtTime(300, t);
+    f.frequency.exponentialRampToValueAtTime(1500, t + 0.9);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.14, t + 0.85);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 1.05);
+    o.connect(f); f.connect(g); g.connect(this.sfx);
+    o.start(t); o.stop(t + 1.1);
+  }
+
+  /** The wells arriving: hydraulics landing hard. */
+  pinballDeploy() {
+    if (!this.ready || this.muted) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    this.duck(0.5, 0.45);
+
+    const n = this._noise(0.4, t);
+    const f = ctx.createBiquadFilter();
+    f.type = 'lowpass';
+    f.frequency.setValueAtTime(2600, t);
+    f.frequency.exponentialRampToValueAtTime(240, t + 0.35);
+    const ng = ctx.createGain();
+    ng.gain.setValueAtTime(0.26, t);
+    ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.4);
+    n.connect(f); f.connect(ng); ng.connect(this.sfx);
+
+    const o = ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(160, t);
+    o.frequency.exponentialRampToValueAtTime(44, t + 0.32);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.42, t + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.42);
+    o.connect(g); g.connect(this.sfx);
+    o.start(t); o.stop(t + 0.45);
+
+    // A bright two-note flourish, so "the deck just got dangerous" reads as
+    // an event rather than as a thud somewhere off screen.
+    [7, 14].forEach((nn, i) => {
+      const st = t + 0.04 + i * 0.09;
+      const s = ctx.createOscillator();
+      s.type = 'square';
+      s.frequency.value = semi(nn);
+      const sg = ctx.createGain();
+      sg.gain.setValueAtTime(0, st);
+      sg.gain.linearRampToValueAtTime(0.07, st + 0.006);
+      sg.gain.exponentialRampToValueAtTime(0.0001, st + 0.24);
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass'; lp.frequency.value = 3200;
+      s.connect(lp); lp.connect(sg); sg.connect(this.sfx);
+      s.start(st); s.stop(st + 0.26);
+    });
+  }
+
+  /** The wells sinking: the deploy run backwards, and quieter. */
+  pinballRetract() {
+    if (!this.ready || this.muted) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const o = ctx.createOscillator();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(220, t);
+    o.frequency.exponentialRampToValueAtTime(52, t + 0.4);
+    const f = ctx.createBiquadFilter();
+    f.type = 'lowpass'; f.Q.value = 4;
+    f.frequency.setValueAtTime(1400, t);
+    f.frequency.exponentialRampToValueAtTime(220, t + 0.4);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.13, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.44);
+    o.connect(f); f.connect(g); g.connect(this.sfx);
+    o.start(t); o.stop(t + 0.46);
+  }
+
+  /**
+   * A pop bumper. The classic recipe and still the right one: a steep downward
+   * pitch sweep on a square wave, which the ear hears as something being
+   * *thrown*. Detuned per hit so a well full of them doesn't machine-gun one
+   * identical sample.
+   */
+  bumper(speed01 = 0.5) {
+    if (!this.ready || this.muted) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const top = lerp(760, 1150, speed01) * rand(0.92, 1.1);
+
+    const o = ctx.createOscillator();
+    o.type = 'square';
+    o.frequency.setValueAtTime(top, t);
+    o.frequency.exponentialRampToValueAtTime(top * 0.18, t + 0.085);
+    const f = ctx.createBiquadFilter();
+    f.type = 'lowpass'; f.Q.value = 5;
+    f.frequency.setValueAtTime(4200, t);
+    f.frequency.exponentialRampToValueAtTime(700, t + 0.1);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.19, t + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.14);
+    o.connect(f); f.connect(g); g.connect(this.sfx);
+    o.start(t); o.stop(t + 0.16);
+
+    // Body thump, so the pop has mass on a phone speaker as well as a desk.
+    const s = ctx.createOscillator();
+    s.type = 'sine';
+    s.frequency.setValueAtTime(190, t);
+    s.frequency.exponentialRampToValueAtTime(72, t + 0.12);
+    const sg = ctx.createGain();
+    sg.gain.setValueAtTime(0, t);
+    sg.gain.linearRampToValueAtTime(0.16, t + 0.005);
+    sg.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+    s.connect(sg); sg.connect(this.sfx);
+    s.start(t); s.stop(t + 0.18);
+  }
+
+  /** A slingshot: a hard mechanical snap with a metallic tail. */
+  sling() {
+    if (!this.ready || this.muted) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+
+    // Snap: near-instant noise slap through a high resonant band.
+    const n = this._noise(0.12, t);
+    const f = ctx.createBiquadFilter();
+    f.type = 'bandpass'; f.Q.value = 2.4;
+    f.frequency.setValueAtTime(2600, t);
+    f.frequency.exponentialRampToValueAtTime(560, t + 0.1);
+    const ng = ctx.createGain();
+    ng.gain.setValueAtTime(0.30, t);
+    ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+    n.connect(f); f.connect(ng); ng.connect(this.sfx);
+
+    // Spring: a fast falling saw, which is what makes it read as *fired*.
+    const o = ctx.createOscillator();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(620 * rand(0.94, 1.08), t);
+    o.frequency.exponentialRampToValueAtTime(96, t + 0.13);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.17, t + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = 3000;
+    o.connect(lp); lp.connect(g); g.connect(this.sfx);
+    o.start(t); o.stop(t + 0.2);
+  }
+
   goal(isPlayer) {
     if (!this.ready || this.muted) return;
     const ctx = this.ctx, t = ctx.currentTime;
