@@ -325,8 +325,14 @@ export class Arena {
       key.shadow.camera.left = -S; key.shadow.camera.right = S;
       key.shadow.camera.top = S; key.shadow.camera.bottom = -S;
       key.shadow.camera.near = 8; key.shadow.camera.far = 70;
-      key.shadow.bias = -0.0012;
-      key.shadow.normalBias = 0.035;
+      // Bias scales with texel size, or it is only correct on one tier.
+      // These numbers were tuned against the 2048 map; at 768 a texel covers
+      // 2.7x more deck, the depth slope across it grows to match, and the same
+      // bias leaves the low tier under-biased — which shows up as fine dark
+      // banding on anything steeply angled to the key light.
+      const texelScale = 2048 / this.preset.shadowSize;
+      key.shadow.bias = -0.0012 * texelScale;
+      key.shadow.normalBias = 0.035 * texelScale;
       key.shadow.radius = 2.2;
     }
     this.root.add(key, key.target);
@@ -361,6 +367,21 @@ export class Arena {
   setBarrierHealth(index, h) {
     this.fields[index].setHealth(h);
     this.floor.setTerritory(index, h);
+  }
+
+  /**
+   * Bring all four walls back to full and live.
+   *
+   * Sealing is latched — it has to be, since it outlives the pilot that caused
+   * it — so it is only ever cleared here. Without this the seal survived the
+   * match that set it and every match after it, and the next four pilots played
+   * inside somebody else's tomb.
+   */
+  resetBarriers() {
+    for (let i = 0; i < this.fields.length; i++) {
+      this.fields[i].reset();
+      this.floor.setTerritory(i, 1);
+    }
   }
 
   shock(x, z, strength, color) { this.floor.addWave(x, z, strength, color); }

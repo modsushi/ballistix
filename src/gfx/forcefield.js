@@ -99,7 +99,19 @@ void main() {
   if (uSealed > 0.001) {
     vec3 dead = vec3(0.30, 0.36, 0.46) * (edge * 0.75 + 0.05) * vFade;
     // Slow diagonal hazard sweep so a sealed wall still reads as *active*.
-    float bar = step(0.5, fract((uv.x * 9.0 + uv.y * 2.0) - uTime * 0.10));
+    //
+    // Filtered against the pattern's own screen-space rate rather than cut with
+    // step(): the panel is foreshortened to a few dozen pixels when its wall is
+    // seen edge-on, which puts several stripes inside one pixel. A hard edge
+    // there samples to whichever side of the bar the pixel centre happens to
+    // land on, and the whole wall crawls with dark lines as the sweep drifts.
+    float sweep = (uv.x * 9.0 + uv.y * 2.0) - uTime * 0.10;
+    float w = clamp(fwidth(sweep) * 0.8, 0.015, 0.5);
+    float bar = smoothstep(0.5 - w, 0.5 + w, fract(sweep));
+    // Past the point where a pixel can resolve a stripe at all, stop trying and
+    // hand back the pattern's average. Softening alone still leaves a ramp that
+    // slides pixel to pixel; only collapsing to the mean is actually stable.
+    bar = mix(bar, 0.5, smoothstep(0.22, 0.5, w));
     dead += vec3(0.42, 0.30, 0.10) * bar * edge * 0.5;
     col = mix(col, dead, uSealed);
   }
@@ -118,6 +130,9 @@ export class ForceField {
     this.mat = new THREE.ShaderMaterial({
       vertexShader: VERT,
       fragmentShader: FRAG,
+      // The sealed sweep filters itself with fwidth(); harmless on WebGL2,
+      // where derivatives are core, but declared so the GLSL1 path compiles.
+      extensions: { derivatives: true },
       transparent: true,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
@@ -148,6 +163,22 @@ export class ForceField {
 
   setHealth(h) { this.mat.uniforms.uHealth.value = h; }
   seal() { this._sealTarget = 1; }
+
+  /**
+   * Back to a live wall, immediately.
+   *
+   * Snapped rather than damped: this runs on a match reset, and easing the seal
+   * off would open every new match with four walls visibly powering back up
+   * from a state the player never saw fail.
+   */
+  reset() {
+    this._sealTarget = 0;
+    this._hit = 0;
+    const u = this.mat.uniforms;
+    u.uSealed.value = 0;
+    u.uHit.value = 0;
+    u.uHealth.value = 1;
+  }
   setNormal(x, y, z) { this.mat.uniforms.uNormal.value.set(x, y, z); }
 
   update(dt, t) {

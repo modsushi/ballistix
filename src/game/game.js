@@ -202,10 +202,10 @@ export class Game {
     this.blackhole?.reset();
     this.bricks.reset(this.pinball?.obstacles() ?? []);
 
-    for (let i = 0; i < 4; i++) {
-      this.arena.setBarrierHealth(i, 1);
-      this.hud.setScore(i, RULES.startPoints);
-    }
+    // Clears the seal as well as the health — the seal is latched and would
+    // otherwise carry into every later match.
+    this.arena.resetBarriers();
+    for (let i = 0; i < 4; i++) this.hud.setScore(i, RULES.startPoints);
     this.hud.resetMatch();
     this.hud.setOrbCount(0);
     this.hud.setCombo(0, 1);
