@@ -56,12 +56,25 @@ export class Audio {
     this.music = ctx.createGain();
     this.music.gain.value = 0.0;
 
+    // Everything the match makes hangs off one bus, so a pause can silence the
+    // lot in a single ramp. Chasing individual voices doesn't work: sustained
+    // ones like the ARC hum have no scheduled end, and a paused simulation
+    // never reaches the frame that would stop them.
+    this.gameBus = ctx.createGain();
+    this.gameBus.gain.value = 1;
+    // Menu blips bypass it — the click that opens the pause screen has to
+    // survive the mute that same click triggers.
+    this.uiBus = ctx.createGain();
+    this.uiBus.gain.value = 1;
+
     // A gentle stereo widener on music only; SFX stay centred so positional
     // cues aren't muddied.
     this.wide = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
 
-    this.sfx.connect(this.comp);
-    this.music.connect(this.comp);
+    this.sfx.connect(this.gameBus);
+    this.music.connect(this.gameBus);
+    this.gameBus.connect(this.comp);
+    this.uiBus.connect(this.comp);
     this.comp.connect(this.master);
     this.master.connect(ctx.destination);
 
@@ -151,6 +164,19 @@ export class Audio {
   setMuted(m) {
     this.muted = m;
     if (this.ready) this.master.gain.value = m ? 0 : 0.9;
+  }
+
+  /**
+   * Silence the match without stopping it. Short ramps rather than a hard gate:
+   * cutting a sustained hum to zero in one sample block clicks.
+   */
+  setPauseMuted(m) {
+    if (!this.ready) return;
+    const t = this.ctx.currentTime;
+    const g = this.gameBus.gain;
+    g.cancelScheduledValues(t);
+    g.setValueAtTime(g.value, t);
+    g.linearRampToValueAtTime(m ? 0 : 1, t + (m ? 0.09 : 0.22));
   }
 
   /** Pull the music down briefly so a big event cuts through. */
@@ -930,6 +956,19 @@ export class Audio {
     g.linearRampToValueAtTime(0.30, t + 0.10);
   }
 
+  /**
+   * Cut the hum with no power-down over it — for fences that are torn down
+   * rather than expiring, such as on a match reset.
+   */
+  arcSilence() {
+    if (!this.ready || !this._arcBus) return;
+    const t = this.ctx.currentTime;
+    const g = this._arcBus.gain;
+    g.cancelScheduledValues(t);
+    g.setValueAtTime(g.value, t);
+    g.linearRampToValueAtTime(0, t + 0.06);
+  }
+
   /** Fence expiring: cut the hum and drop a power-down over the top. */
   arcOff() {
     if (!this.ready || this.muted) return;
@@ -1014,7 +1053,7 @@ export class Audio {
     g.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
     const f = ctx.createBiquadFilter();
     f.type = 'lowpass'; f.frequency.value = 3200;
-    o.connect(f); f.connect(g); g.connect(this.sfx);
+    o.connect(f); f.connect(g); g.connect(this.uiBus);
     o.start(t); o.stop(t + 0.14);
   }
 

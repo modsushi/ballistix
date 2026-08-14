@@ -39,6 +39,10 @@ import { POINTER_GAIN } from '../core/input.js';
 const FIXED = 1 / 120;
 const MAX_CATCHUP = 0.25;
 
+// When "3" lands. The intro runs 3.4s, so the digits fall on 0.4/1.4/2.4 and
+// "1" clears just as the serve charge takes over.
+const INTRO_FIRST_TICK = 0.4;
+
 export const State = {
   INTRO: 'intro',
   SERVE: 'serve',
@@ -114,7 +118,6 @@ export class Game {
     this._resetCommon(difficulty);
     this.state = State.INTRO;
     this.introTimer = 0;
-    this._introAnnounced = false;
     this.camera.startIntro();
   }
 
@@ -169,6 +172,10 @@ export class Game {
     }
     for (const o of this.orbs) o.kill();
     for (const f of this.arcFields || []) { f.extinguish(); f.update(1, 0); }
+    // The fences are torn down here rather than through `arcExpire`, so the
+    // sustained hum has to be cut by hand — otherwise abandoning a match with a
+    // fence up carries its buzz into the menu.
+    this.audio.arcSilence();
     this._arcWasReady = false;
 
     // Pilot 0 gets an AI too — it only drives during attract, but keeping it
@@ -210,7 +217,15 @@ export class Game {
   _slow(scale, hold) { this._targetScale = scale; this._slowHold = hold; }
 
   /** HUD announcements are suppressed while the menus own the screen. */
-  _say(text, hold) { if (!this.attract) this.hud.announce(text, hold); }
+  /**
+   * Match events go to the toast rail, never over the deck.
+   *
+   * Only outcomes are worth a toast — who went down, who won. Everything the
+   * deck already shows for itself (an orb arriving, blocks surfacing, the
+   * fence going up) is read from the deck; captioning it was noise sitting on
+   * top of the one thing the player is trying to track.
+   */
+  _toast(text, opts) { if (!this.attract) this.hud.toast(text, opts); }
 
   get aliveCount() { return this.alive.reduce((n, a) => n + (a ? 1 : 0), 0); }
 
@@ -417,9 +432,9 @@ export class Game {
     this.scores[by]++;
     this.hud.setScore(by, this.scores[by]);
     this.arena.setBarrierHealth(by, Math.min(1, this.scores[by] / RULES.startPoints));
+    // No caption: the pip strip growing and the salvage meter resetting say it,
+    // and they say it where the player is already looking.
     this.effects.salvagePoint(this.crafts[by]);
-    if (by === 0) this._say('SALVAGE\n+1 POINT', 1100);
-    else if (this.scores[by] > RULES.startPoints) this._say(`${PLAYERS[by].name} +1`, 800);
   }
 
   _concede(e) {
@@ -462,10 +477,8 @@ export class Game {
     if (this.scores[victim] === 0) {
       this._eliminate(victim);
     } else {
-      const msg = wasPlayer
-        ? (this.scores[victim] === 1 ? 'ONE LEFT' : 'HIT')
-        : `${PLAYERS[victim].name} HIT`;
-      if (wasPlayer || this.scores[victim] <= 1) this._say(msg, 1100);
+      // A conceded point is already loud: the pip goes out, the barrier dims,
+      // the frame closes in on your last life. It doesn't need a caption too.
       this._queueServe(RULES.respawnDelay);
     }
   }
@@ -486,7 +499,9 @@ export class Game {
       this.overTimer = 0;
       for (const o of this.orbs) o.kill();
       const winner = this.alive.indexOf(true);
-      this._say(winner === 0 ? 'YOU SURVIVE' : `${PLAYERS[winner].name}\nWINS`, 2400);
+      this._toast(winner === 0 ? 'YOU SURVIVE' : `${PLAYERS[winner].name} WINS`, {
+        color: PLAYERS[winner].css, tone: winner === 0 ? 'good' : undefined,
+      });
       this.audio.stinger(winner === 0);
       this.audio.setIntensity(0);
       return;
@@ -496,16 +511,19 @@ export class Game {
     this.koTimer = 1.9;
     this._slow(0.25, 0.7);
 
-    // Going down to two closes the ledger. Folded into the elimination
-    // announcement rather than following it, because a second `_say` would
-    // simply overwrite the first before anyone had read it — and a rule that
-    // changes mid-match without being announced looks like the game breaking.
     const down = index === 0 ? 'YOU ARE OUT' : `${PLAYERS[index].name} DOWN`;
+    this._toast(down, {
+      color: index === 0 ? 'var(--danger)' : PLAYERS[index].css,
+      tone: index === 0 ? 'bad' : undefined,
+    });
+
+    // Going down to two closes the ledger. It gets its own toast — they stack,
+    // so the rule change is no longer competing with the knockout for the one
+    // slot, and a rule that changes mid-match without being announced looks
+    // like the game breaking.
     if (remaining < RULES.salvageMinPilots) {
       this.hud.setSalvageClosed(true);
-      this._say(`${down}\nSALVAGE CLOSED`, 2000);
-    } else {
-      this._say(down, 1700);
+      this._toast('SALVAGE CLOSED');
     }
 
     // Everything currently in flight is cleared; the deck resets around the
@@ -558,14 +576,22 @@ export class Game {
   }
 
   // ------------------------------------------------------------------ states --
+  /**
+   * The opening beat is a 3 · 2 · 1 on the second, ending as the serve charge
+   * begins. A countdown is the one thing worth putting over the deck: it isn't
+   * telling the player what happened, it's telling them how long they have.
+   */
   _updateIntro(dtReal) {
+    const was = this.introTimer;
     this.introTimer += dtReal;
-    if (this.introTimer > 2.0 && !this._introAnnounced) {
-      this._introAnnounced = true;
-      this._say('FIVE POINTS EACH\nLAST ONE STANDING', 1900);
+    for (let i = 0; i < 3; i++) {
+      const at = INTRO_FIRST_TICK + i;
+      if (was < at && this.introTimer >= at && !this.attract) {
+        this.hud.countdown(3 - i);
+        this.audio.ui(i === 2 ? 'confirm' : 'tick');
+      }
     }
     if (this.introTimer >= 3.4) {
-      this._introAnnounced = false;
       this.state = State.SERVE;
       this.serveTimer = 0;
       this.serveDuration = 1.4;
@@ -602,8 +628,9 @@ export class Game {
     const want = this.targetOrbCount();
     const have = this.activeOrbs().length + this.pendingServes.length;
     if (have < want) {
+      // The count in the corner ticks up and the serve ring lights the deck;
+      // both land before the orb does, which is all the warning this needed.
       this.pendingServes.push(0.6);
-      this._say('ORB INBOUND', 900);
     }
     this.hud.setOrbCount(this.activeOrbs().length);
 
@@ -665,7 +692,6 @@ export class Game {
         c.arcJustFired = false;
         f.ignite(c.u);
         this.effects.arcIgnite(c);
-        if (i === 0) this._say('ARC UP', 900);
       }
       if (f.active && c.arcActive <= 0) {
         f.extinguish();
@@ -689,9 +715,11 @@ export class Game {
    * The middle of the deck: blocks surfacing on the match clock, and the
    * pinball wells running their own deploy cycle.
    *
-   * Both announce themselves. A hazard that appears silently under a rally is
-   * indistinguishable from a bug — the player has to be told the rules of the
-   * deck changed, and told slightly before it happens.
+   * Both telegraph themselves on the deck — a warning swell before the wells
+   * rise, a ring of light as blocks surface. A hazard that appears silently
+   * under a rally is indistinguishable from a bug, so the warning has to exist;
+   * it just belongs in the arena, where the player is looking, rather than in
+   * a caption over it.
    */
   _updateMiddle(dt) {
     this.bricks.update(dt, this.playTime, this.aliveCount);
@@ -700,17 +728,12 @@ export class Game {
     // simultaneous swells is a wall of noise rather than an arrival.
     const surfaced = this.bricks.justSpawned;
     for (let i = 0; i < Math.min(surfaced.length, 4); i++) this.effects.brickSurface(surfaced[i]);
-    if (this.bricks.justSpawned.length && this.bricks.spawned === 1) {
-      this._say('BLOCKS SURFACING\nBREAK THEM FOR POINTS', 1700);
-    }
-
     const h = this.blackhole;
     if (h) {
       h.update(dt, this.matchTime, this.bricks);
       if (h.justWarned) this.effects.blackHoleWarn(h);
       if (h.justOpened) {
         this.effects.blackHoleOpen(h);
-        this._say('SINGULARITY', 1300);
       }
       if (h.justClosed) this.effects.blackHoleClose(h);
       if (h.live) this.effects.blackHoleAmbient(h, dt);
@@ -723,7 +746,6 @@ export class Game {
     if (p.justWarned) this.effects.pinballWarn(p);
     if (p.justDeployed) {
       this.effects.pinballDeploy(p);
-      this._say('BUMPERS UP', 1000);
     }
     if (p.justRetracted) this.effects.pinballRetract(p);
 

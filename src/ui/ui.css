@@ -218,10 +218,56 @@ body::after {
   color: var(--ink);
 }
 
-.hint {
-  font-size: 11.5px; letter-spacing: 0.16em; text-transform: uppercase;
-  color: var(--ink-faint); text-align: center; line-height: 1.7;
+/* --- controls diagram ------------------------------------------------
+   Shown instead of a sentence: keycaps and glyphs read at a glance and don't
+   need to be translated into muscle memory the way prose does. */
+.controls {
+  /* Bottom-aligned so every caption sits on one line however tall the glyph
+     above it is — the two-row WASD cluster would otherwise drag its label
+     below the others and break the row. */
+  display: flex; justify-content: center; align-items: flex-end;
+  flex-wrap: wrap;
+  gap: clamp(14px, 5vw, 34px);
 }
+.ctrl { display: flex; flex-direction: column; align-items: center; gap: 9px; }
+.ctrl i {
+  display: flex; align-items: center; gap: 5px;
+  font-style: normal;
+  font-size: 9.5px; letter-spacing: 0.2em; text-indent: 0.2em;
+  color: var(--ink-faint); white-space: nowrap;
+}
+.g-bolt { width: 7px; height: 11px; fill: var(--ink-faint); text-indent: 0; }
+
+.key {
+  display: grid; place-items: center;
+  min-width: 30px; height: 30px; padding: 0 8px;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-indent: 0.1em;
+  color: var(--ink-dim);
+  background: var(--glass);
+  border-radius: 6px;
+  /* Two insets: a hairline edge plus a bright top lip, which is what makes a
+     flat rectangle read as a physical key rather than a button. */
+  box-shadow: 0 0 0 1px var(--glass-edge) inset,
+              0 1px 0 rgba(190, 235, 255, 0.18) inset,
+              0 2px 0 rgba(4, 8, 16, 0.55);
+}
+.key.space { min-width: clamp(104px, 30vw, 148px); }
+.key.dead { color: rgba(70, 85, 108, 0.5); box-shadow: 0 0 0 1px rgba(120, 175, 230, 0.1) inset; }
+
+/* Placed explicitly rather than left to auto-flow: W belongs over S, and
+   auto-placement puts it over A. */
+.keys.wasd { display: grid; grid-template-columns: repeat(3, 30px); gap: 4px; }
+.keys.wasd .key:nth-child(1) { grid-area: 1 / 2; }
+.keys.wasd .key:nth-child(2) { grid-area: 2 / 1; }
+.keys.wasd .key:nth-child(3) { grid-area: 2 / 2; }
+.keys.wasd .key:nth-child(4) { grid-area: 2 / 3; }
+
+.glyph { width: 44px; height: 30px; overflow: visible; }
+.glyph .g-stroke {
+  fill: none; stroke: var(--ink-dim); stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+.glyph .g-fill { fill: var(--p0); filter: drop-shadow(0 0 7px rgba(36, 226, 255, 0.7)); }
 .credit { font-size: 10px; letter-spacing: 0.1em; color: rgba(70,85,108,0.75); text-align: center; }
 
 /* --- boot ------------------------------------------------------------ */
@@ -558,30 +604,69 @@ body::after {
 .ghost-btn svg { fill: currentColor; }
 .ghost-btn:active { transform: scale(0.9); color: var(--ink); }
 
-/* --- announcements --------------------------------------------------- */
-.announce {
-  position: absolute; left: 0; right: 0; top: 33%;
+/* --- serve countdown -------------------------------------------------
+   The only thing allowed in the middle of the deck. It collapses inward onto
+   the serve point instead of blurring outward over it, so the eye is already
+   where the orb appears. */
+.countdown {
+  position: absolute; left: 0; right: 0; top: 38%;
   display: grid; place-items: center;
   pointer-events: none;
 }
-.announce span {
-  font-size: clamp(26px, 8.5vw, 62px);
-  font-weight: 800;
-  letter-spacing: 0.07em; text-indent: 0.07em;
-  text-align: center;
+.countdown span {
+  font-family: var(--mono);
+  font-size: clamp(56px, 17vw, 132px);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
   color: #fff;
   opacity: 0;
-  white-space: pre-line;
-  line-height: 1.05;
-  text-shadow: 0 0 34px rgba(120, 210, 255, 0.75), 0 4px 30px rgba(0,0,0,0.6);
+  text-shadow: 0 0 40px rgba(36, 226, 255, 0.85), 0 0 90px rgba(36, 226, 255, 0.35);
 }
-.announce.show span { animation: announce 1.5s var(--ease-out) forwards; }
-@keyframes announce {
-  0%   { opacity: 0; transform: scale(1.42) translateY(6px); filter: blur(14px); letter-spacing: 0.3em; }
-  16%  { opacity: 1; transform: scale(1); filter: blur(0); letter-spacing: 0.07em; }
-  74%  { opacity: 1; transform: scale(1); }
-  100% { opacity: 0; transform: scale(0.94) translateY(-14px); filter: blur(5px); }
+.countdown.show span { animation: countTick 0.95s var(--ease-out) forwards; }
+@keyframes countTick {
+  0%   { opacity: 0; transform: scale(1.6); }
+  14%  { opacity: 1; transform: scale(1); }
+  70%  { opacity: 0.9; transform: scale(1); }
+  100% { opacity: 0; transform: scale(0.82); }
 }
+
+/* --- toasts ----------------------------------------------------------
+   Match events live here now: clear of the play area, stacked so two of them
+   can be read, and never over the orb. */
+/* Top-centre, under the readouts: the one band that is free in every layout.
+   The rival pods hold the left, the orb count holds the right, and anywhere
+   lower sits on the deck — on a phone that's the middle of the arena, on a
+   desktop it's your own craft. */
+.toasts {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  top: calc(var(--pad) + clamp(52px, 13vw, 68px));
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  pointer-events: none;
+  max-width: min(420px, 88vw);
+}
+.toast {
+  --c: var(--ink);
+  padding: 7px 15px 7px 13px;
+  font-size: clamp(10px, 2.8vw, 12px); font-weight: 700;
+  letter-spacing: 0.18em; text-indent: 0.18em;
+  white-space: nowrap;
+  color: var(--ink);
+  /* The pilot's colour bleeds in from the marker rather than tinting the whole
+     chip, so four different toasts still read as one family. */
+  background: linear-gradient(90deg, color-mix(in srgb, var(--c) 20%, transparent), transparent 60%),
+              var(--glass);
+  backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
+  clip-path: var(--oct);
+  box-shadow: 0 0 0 1px var(--glass-edge) inset;
+  border-left: 2px solid var(--c);
+  animation: toastIn 0.36s var(--ease-out) both;
+}
+.toast.good { color: var(--gold); }
+.toast.bad  { color: var(--danger); }
+.toast.out { animation: toastOut 0.34s var(--ease-in-out) both; }
+@keyframes toastIn  { from { opacity: 0; transform: translateY(-9px); } to { opacity: 1; transform: none; } }
+@keyframes toastOut { to { opacity: 0; transform: translateY(-6px); } }
 
 /* --- deflect chain --------------------------------------------------- */
 .combo {

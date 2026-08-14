@@ -13,6 +13,54 @@ const ARC_LEN = 2 * Math.PI * 42;
 
 const el = (id) => document.getElementById(id);
 
+// The lightning bolt, reused from the HUD's ARC meter so the menu teaches the
+// same glyph the player will be watching for mid-match.
+const BOLT = '<svg class="g-bolt" viewBox="0 0 12 20" aria-hidden="true"><path d="M8.4 0 L1 11.4 H4.9 L3.6 20 L11 8.2 H6.6 Z"/></svg>';
+
+/**
+ * Controls, drawn rather than written.
+ *
+ * A block of prose on a menu is read once and forgotten; a picture of the key
+ * you are about to press survives the first rally. W and S are shown but dimmed
+ * — the cluster is what people recognise, and greying the two that do nothing
+ * is more honest than pretending the pair is all there is.
+ */
+const KEY_CONTROLS = `
+  <div class="ctrl">
+    <div class="keys wasd">
+      <b class="key dead">W</b>
+      <b class="key">A</b><b class="key dead">S</b><b class="key">D</b>
+    </div>
+    <i>STEER</i>
+  </div>
+  <div class="ctrl">
+    <b class="key space">SPACE</b>
+    <i>${BOLT}ARC / SURGE</i>
+  </div>
+  <div class="ctrl">
+    <b class="key">SHIFT</b>
+    <i>SURGE ONLY</i>
+  </div>`;
+
+const TOUCH_CONTROLS = `
+  <div class="ctrl">
+    <svg class="glyph" viewBox="0 0 44 32" aria-hidden="true">
+      <path class="g-stroke" d="M8 16 H36" />
+      <path class="g-stroke" d="M12 11 L7 16 L12 21" />
+      <path class="g-stroke" d="M32 11 L37 16 L32 21" />
+      <circle class="g-fill" cx="22" cy="16" r="5" />
+    </svg>
+    <i>SLIDE TO STEER</i>
+  </div>
+  <div class="ctrl">
+    <svg class="glyph" viewBox="0 0 44 32" aria-hidden="true">
+      <circle class="g-stroke" cx="22" cy="16" r="12" opacity="0.35" />
+      <circle class="g-stroke" cx="22" cy="16" r="8" opacity="0.7" />
+      <circle class="g-fill" cx="22" cy="16" r="4" />
+    </svg>
+    <i>${BOLT}TAP TO FIRE</i>
+  </div>`;
+
 export class HUD {
   constructor() {
     this.dom = {
@@ -22,8 +70,9 @@ export class HUD {
       selfArc: el('selfArc'),
       selfScore: el('selfScore'),
       selfPips: el('selfPips'),
-      announce: el('announce'),
-      announceText: el('announce').querySelector('span'),
+      countdown: el('countdown'),
+      countdownNum: el('countdown').querySelector('span'),
+      toasts: el('toasts'),
       arcMeter: el('arcMeter'),
       arcFill: el('arcFill'),
       arcWord: el('arcWord'),
@@ -65,7 +114,7 @@ export class HUD {
     this._pinLive = null;
     this._bh = -1;
     this._bhLive = null;
-    this._announceTimer = null;
+    this._countTimer = null;
     // No readout for anything that isn't in the match.
     if (!PINBALL.enabled) this.dom.pinMeter.style.display = 'none';
     if (!BLACKHOLE.enabled) this.dom.bhMeter.style.display = 'none';
@@ -114,10 +163,7 @@ export class HUD {
 
   _setControlHint() {
     const touch = matchMedia('(hover: none) and (pointer: coarse)').matches;
-    this.dom.ctrlHint.innerHTML = touch
-      ? 'Slide to steer &nbsp;·&nbsp; Tap to fire &mdash; ARC when charged'
-      : 'Mouse or A / D to steer &nbsp;·&nbsp; Space to fire &mdash; ARC when charged'
-        + '<br/>Shift for surge only';
+    this.dom.ctrlHint.innerHTML = touch ? TOUCH_CONTROLS : KEY_CONTROLS;
   }
 
   // --------------------------------------------------------------- screens --
@@ -293,13 +339,49 @@ export class HUD {
     this.dom.bhWord.textContent = live ? 'OPEN' : 'SINGULARITY';
   }
 
-  announce(text, hold = 1500) {
-    this.dom.announceText.textContent = text;
-    this.dom.announce.classList.remove('show');
-    void this.dom.announce.offsetWidth;
-    this.dom.announce.classList.add('show');
-    clearTimeout(this._announceTimer);
-    this._announceTimer = setTimeout(() => this.dom.announce.classList.remove('show'), hold);
+  /**
+   * The serve countdown — the one thing that earns the middle of the arena,
+   * because it is the only message the player has to act on *before* it ends.
+   *
+   * @param {number|string} n
+   */
+  countdown(n) {
+    this.dom.countdownNum.textContent = String(n);
+    this.dom.countdown.classList.remove('show');
+    void this.dom.countdown.offsetWidth;
+    this.dom.countdown.classList.add('show');
+    clearTimeout(this._countTimer);
+    this._countTimer = setTimeout(() => this.dom.countdown.classList.remove('show'), 950);
+  }
+
+  /**
+   * Everything else that used to be shouted across the deck.
+   *
+   * A toast sits out of the play area and stacks instead of overwriting, so two
+   * things happening at once both get read — which the single centre slot could
+   * never do — and nothing blurs across the orb you are tracking.
+   *
+   * @param {string} text
+   * @param {{color?: string, tone?: 'good'|'bad'}} [opts]
+   */
+  toast(text, opts = {}) {
+    const t = document.createElement('div');
+    t.className = 'toast' + (opts.tone ? ` ${opts.tone}` : '');
+    if (opts.color) t.style.setProperty('--c', opts.color);
+    t.textContent = text;
+    this.dom.toasts.appendChild(t);
+    // Cap the stack: a knockout cascade would otherwise run off the top.
+    while (this.dom.toasts.children.length > 3) this.dom.toasts.firstElementChild.remove();
+    setTimeout(() => {
+      t.classList.add('out');
+      setTimeout(() => t.remove(), 360);
+    }, 2200);
+  }
+
+  clearToasts() {
+    this.dom.toasts.innerHTML = '';
+    this.dom.countdown.classList.remove('show');
+    clearTimeout(this._countTimer);
   }
 
   /** Re-trigger a CSS animation class that may already be applied. */
@@ -319,7 +401,7 @@ export class HUD {
       this.setScore(i, RULES.startPoints);
     }
     this.dom.combo.classList.remove('show');
-    this.dom.announce.classList.remove('show');
+    this.clearToasts();
     this._arc = -1;
     this._arcState = '';
     this.setArc(0, false, false);

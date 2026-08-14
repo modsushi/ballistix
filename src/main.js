@@ -248,14 +248,15 @@ class App {
   _setPaused(p) {
     this.paused = p;
     this.game.setPaused(p);
+    // A paused match is silent — bed, effects and any sustained voice such as
+    // a live ARC fence, which would otherwise hum on over a frozen deck.
+    this.audio.setPauseMuted(p);
     if (p) {
       this.audio.ui('back');
       this.hud.showScreen($('pause'));
-      this._music(0.18);
     } else {
       this.audio.ui('tick');
       this.hud.hideScreen($('pause'));
-      this._music(0.5);
     }
   }
 
