@@ -89,6 +89,20 @@ export const RULES = {
   serveDelay: 1.5,
 };
 
+/**
+ * Arcade score. Deliberately a *separate* currency from the points on the pip
+ * strip: those are lives, and tying a reward to them would let a good rally buy
+ * survival, which is the one thing the match balance can't absorb (see the note
+ * on `RULES.maxPoints`). Score costs the simulation nothing and can therefore
+ * be as generous as it likes.
+ */
+export const SCORING = {
+  perDeflect: 1,      // base award for a clean deflection
+  /** Chain length per multiplier step: ×2 at 3, ×3 at 6, and so on. */
+  chainPerStep: 3,
+  maxMultiplier: 8,
+};
+
 export const PADDLE = {
   halfLen: 2.4,       // half the deflector width
   halfThick: 0.46,

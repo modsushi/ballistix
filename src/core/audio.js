@@ -1022,6 +1022,78 @@ export class Audio {
     o.start(t); o.stop(t + 0.12);
   }
 
+  /**
+   * The score multiplier stepping up.
+   *
+   * Climbs the pentatonic scale a step per tier, so the reward is audible as a
+   * rising line across a long rally rather than the same ping over and over —
+   * by ×5 the player can hear how well the chain is going without looking.
+   *
+   * @param {number} tier 2..8
+   */
+  chainUp(tier = 2) {
+    if (!this.ready || this.muted) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const step = clamp(tier - 2, 0, SCALE.length - 3);
+    [0, 0.06].forEach((off, i) => {
+      const o = ctx.createOscillator();
+      o.type = 'triangle';
+      o.frequency.value = semi(SCALE[step + i * 2] + 12);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, t + off);
+      g.gain.linearRampToValueAtTime(0.085, t + off + 0.005);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + off + 0.34);
+      o.connect(g); g.connect(this.sfx);
+      o.start(t + off); o.stop(t + off + 0.36);
+    });
+  }
+
+  /**
+   * One click of a score counting up.
+   *
+   * Rate-limited rather than played per digit: a tally can step thirty times in
+   * a second and thirty overlapping blips is a buzz, not a count. The pitch
+   * climbs with progress so the ear hears the number approaching its total.
+   *
+   * @param {number} p01 0..1 through the count
+   */
+  scoreTick(p01 = 0) {
+    if (!this.ready || this.muted) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    if (t - (this._lastTick || 0) < 0.045) return;
+    this._lastTick = t;
+
+    const o = ctx.createOscillator();
+    o.type = 'square';
+    o.frequency.value = semi(7 + Math.round(p01 * 12));
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.045, t + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.075);
+    const f = ctx.createBiquadFilter();
+    f.type = 'lowpass'; f.frequency.value = 5200;
+    o.connect(f); f.connect(g); g.connect(this.sfx);
+    o.start(t); o.stop(t + 0.09);
+  }
+
+  /** The total landing: a struck chord, brighter on a win. */
+  scoreLand(win = true) {
+    if (!this.ready || this.muted) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const notes = win ? [12, 16, 19, 24] : [12, 15, 19];
+    notes.forEach((n, i) => {
+      const o = ctx.createOscillator();
+      o.type = i === 0 ? 'triangle' : 'sine';
+      o.frequency.value = semi(n);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(0.10 / (i + 1), t + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 1.5);
+      o.connect(g); g.connect(this.sfx);
+      o.start(t); o.stop(t + 1.55);
+    });
+  }
+
   /** The fence coming off cooldown — a short, bright two-note ping. */
   arcReady() {
     if (!this.ready || this.muted) return;

@@ -264,7 +264,25 @@ class App {
     this.inMatch = false;
     this.hud.showGame(false);
     this._music(0.25);
-    this.hud.showResult(result);
+    // The result screen drives the arena: every beat of the tally gets a volley
+    // out of the winner's hull, so the celebration and the numbers are one
+    // performance rather than two things happening at once.
+    const won = result.order[0] === 0;
+    this.gcam.victoryPanel = true;
+    this.hud.showResult(result, {
+      beat: (i) => {
+        this.audio.ui(i === 0 ? 'confirm' : 'tick');
+        if (won && i === 0) this.game.celebrateBurst(1.0);
+      },
+      tick: (p) => {
+        this.audio.scoreTick(p);
+        if (won && Math.random() < 0.035) this.game.celebrateBurst(0.45);
+      },
+      land: (w) => {
+        this.audio.scoreLand(w);
+        if (w) this.game.celebrateBurst(1.5);
+      },
+    });
   }
 
   // ---------------------------------------------------------------- resize --

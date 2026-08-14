@@ -79,6 +79,12 @@ export class GameCamera {
     this.intro = 0;
     this.introActive = false;
     this.kickX = 0; this.kickY = 0;
+    this.victoryCraft = null;
+    this.victory = 0;
+    this.victoryK = 0;
+    this.victoryPanel = false;   // the result card is up; slide the subject clear
+    this.victoryPush = 0;
+    this.victoryR = 14;
     this._base = new THREE.Vector3();
     this._look = new THREE.Vector3();
     this.stableCam = new THREE.PerspectiveCamera(50, aspect, 0.5, 1400);
@@ -205,6 +211,33 @@ export class GameCamera {
 
   startIntro() { this.intro = 0; this.introActive = true; }
 
+  /**
+   * Leave the match framing and hold on the winner.
+   *
+   * The framing solve exists to keep the whole deck readable, which is exactly
+   * the wrong composition once there is nothing left to read — a match ends with
+   * the camera politely showing you an empty arena. So the victory shot throws
+   * the solve away and orbits the surviving craft from inside the deck, close
+   * enough that the hull fills a third of the frame.
+   *
+   * @param {import('./craft.js').Craft} craft
+   */
+  startVictory(craft) {
+    this.victoryCraft = craft;
+    this.victory = 0;
+    this.victoryK = 0;
+    this.victoryPanel = false;
+    this.victoryPush = 0;
+  }
+
+  clearVictory() {
+    this.victoryCraft = null;
+    this.victory = 0;
+    this.victoryK = 0;
+    this.victoryPanel = false;
+    this.victoryPush = 0;
+  }
+
   update(dt, t) {
     // --- decay -------------------------------------------------------------
     this.trauma = Math.max(0, this.trauma - dt * 1.55);
@@ -245,6 +278,34 @@ export class GameCamera {
     );
     this._look.set(this.leanX * 1.7, this.lookLift, this.leanZ * 1.7 + this.lookLift * 0.15);
 
+    // --- victory hero shot, blended over the solved framing -----------------
+    if (this.victoryCraft) {
+      this.victory += dt;
+      // Slower in than the intro is out: a hard cut to a close-up reads as a
+      // camera error, and the drift has to be moving by the time it arrives.
+      const k = clamp(this.victory / 1.9, 0, 1);
+      this.victoryK = 1 - Math.pow(1 - k, 3);
+
+      const c = this.victoryCraft;
+      c.worldPos(_hero);
+      // Orbit anchored on the line from the craft toward the deck's centre, so
+      // the shot opens on the hull's face and drifts around it from there.
+      const ang = Math.atan2(-c.nx, -c.nz) + Math.sin(this.victory * 0.22) * 0.55 - 0.28;
+      const el = (21 + Math.sin(this.victory * 0.31) * 3.0) * Math.PI / 180;
+      const R = lerp(19.5, 15.5, this.victoryK);
+      this.victoryR = R;
+
+      _heroPos.set(
+        _hero.x + Math.sin(ang) * Math.cos(el) * R,
+        _hero.y + Math.sin(el) * R + 3.1,
+        _hero.z + Math.cos(ang) * Math.cos(el) * R,
+      );
+      _heroLook.set(_hero.x, _hero.y + 1.35, _hero.z);
+
+      this._base.lerp(_heroPos, this.victoryK);
+      this._look.lerp(_heroLook, this.victoryK);
+    }
+
     this.cam.position.copy(this._base);
     this.cam.lookAt(this._look);
 
@@ -261,6 +322,24 @@ export class GameCamera {
     } else if (this.kickX || this.kickY) {
       this.cam.translateX(this.kickX * 0.5);
       this.cam.translateY(this.kickY * 0.35);
+    }
+
+    // --- make room for the result card -------------------------------------
+    // Once the panel is up the hero shot has to share the frame with it, so the
+    // subject is pushed out from behind the card: up, and to one side when
+    // there is width to spare. Applied after `lookAt` as a pure translation —
+    // re-aiming would swing the whole orbit instead of sliding the composition.
+    if (this.victoryCraft) {
+      this.victoryPush = damp(this.victoryPush, this.victoryPanel ? 1 : 0, 2.4, dt);
+      if (this.victoryPush > 0.002) {
+        // Framed against the orbit radius actually in use — deriving the
+        // offset from a guessed distance undershoots and leaves the subject
+        // half behind the card.
+        const vh = 2 * Math.tan(this.cam.fov * Math.PI / 360) * (this.victoryR || 14);
+        const wide = this.aspect > 1.05;
+        if (wide) this.cam.translateX(vh * this.aspect * 0.33 * this.victoryPush);
+        this.cam.translateY(-vh * (wide ? 0.14 : 0.24) * this.victoryPush);
+      }
     }
 
     const fov = this.baseFov + this.fovPunch + s * 1.6;
@@ -318,6 +397,9 @@ export class GameCamera {
   }
 }
 
+const _hero = new THREE.Vector3();
+const _heroPos = new THREE.Vector3();
+const _heroLook = new THREE.Vector3();
 const _p1 = new THREE.Vector3();
 const _p2 = new THREE.Vector3();
 const _tmp = new THREE.Vector3();

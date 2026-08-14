@@ -49,6 +49,8 @@ export class Craft {
     this.recoil = 0;
     this.hitFlash = 0;
     this.dying = 0;
+    this.victory = 0;        // seconds into the victory pose, 0 = not posing
+    this.victorySpin = 0;
     this._dt = 0;
 
     this.root = new THREE.Group();
@@ -107,6 +109,7 @@ export class Craft {
         uTime: { value: 0 },
         uHit: { value: 0 },
         uHitU: { value: 0.5 },
+        uHitT: { value: 1 },      // 0..1 since the last strike, drives the front
         uSurge: { value: 1 },
         uAlive: { value: 1 },
       },
@@ -122,7 +125,7 @@ export class Craft {
       fragmentShader: /* glsl */`
         precision mediump float;
         varying vec2 vUvD; varying vec3 vN; varying vec3 vV;
-        uniform vec3 uColor; uniform float uTime, uHit, uHitU, uSurge, uAlive;
+        uniform vec3 uColor; uniform float uTime, uHit, uHitU, uHitT, uSurge, uAlive;
         void main(){
           float u = vUvD.x, v = vUvD.y;
           // Vertical containment plus a bright rim top and bottom.
@@ -136,16 +139,29 @@ export class Craft {
           float a = (band * 0.30 + rim * 0.55 + fres * 0.45) * ends;
           a *= 0.78 + ripple * 0.22;
 
-          // Impact: a bright bloom centred where the orb struck.
+          // Impact. Three parts, none of them a soft bloom: a hard hot point
+          // exactly where the orb landed, a shock front racing outward along
+          // the plate, and a fast vertical resonance through the hot zone.
+          //
+          // The wide gaussian this replaced lit a third of the plate at once,
+          // and at the camera's pitch a lit curved plate is a dome — every
+          // strike read as a bubble inflating around the craft rather than as
+          // something being hit.
           float d = abs(u - uHitU);
-          a += exp(-d * d * 46.0) * uHit * 2.4;
+          float point = exp(-d * d * 300.0) * uHit;
+          // Squared by multiply, never pow(): the base is signed on one side of
+          // the front, and pow() of a negative base is NaN on mobile drivers.
+          float fd = (d - uHitT * 0.62) * 13.0;
+          float front = exp(-fd * fd) * (1.0 - uHitT) * uHit;
+          float resonate = 0.62 + 0.38 * sin(v * 34.0 - uTime * 42.0);
+          a += point * 2.2 * resonate + front * 1.1;
 
           vec3 col = uColor * a;
           // Charged and ready reads as white-hot; spent reads as team colour.
           col = mix(col, vec3(1.0) * a * 1.2, uSurge * 0.10);
           // Readiness reads as a bright hairline along the top edge.
           col += vec3(0.85, 0.95, 1.0) * smoothstep(0.95, 1.0, v) * ends * uSurge * 0.55;
-          col += vec3(1.0) * exp(-d * d * 90.0) * uHit * 1.6;
+          col += vec3(1.0) * point * 1.9 + vec3(0.80, 0.92, 1.0) * front * 0.85;
 
           gl_FragColor = vec4(col * 2.6 * uAlive, clamp(a, 0.0, 1.0) * uAlive);
         }`,
@@ -236,13 +252,26 @@ export class Craft {
   /** Called when an orb is deflected off this craft. */
   onDeflect(u01, power) {
     this.defMat.uniforms.uHitU.value = u01;
-    this.defMat.uniforms.uHit.value = Math.min(1.4, this.defMat.uniforms.uHit.value + power);
+    this.defMat.uniforms.uHit.value = Math.min(1.15, this.defMat.uniforms.uHit.value + power);
+    this.defMat.uniforms.uHitT.value = 0;   // restart the shock front
     this.recoil = Math.min(0.85, this.recoil + power * 0.5);
     this.hitFlash = 1;
   }
 
   /** Called when this pilot concedes a point. */
   onConcede() { this.hitFlash = 1.6; }
+
+  /**
+   * Won the match. The hull lifts off its station, noses up and turns on the
+   * spot with the drives wide open — a pose, held, because the camera is about
+   * to spend two seconds on nothing else.
+   */
+  celebrate() { this.victory = 0.0001; }
+
+  clearCelebrate() {
+    this.victory = 0;
+    this.victorySpin = 0;
+  }
 
   eliminate() {
     if (!this.alive) return;
@@ -286,7 +315,11 @@ export class Craft {
 
     const u = this.defMat.uniforms;
     u.uTime.value = t;
-    u.uHit.value *= Math.exp(-dt * 6.5);
+    // Snappier than it was: a strike should be over before the eye settles on
+    // it, leaving the sparks and debris to carry the aftermath.
+    u.uHit.value *= Math.exp(-dt * 8.5);
+    // ~0.28s for the shock front to cross the plate and expire.
+    u.uHitT.value = Math.min(1, u.uHitT.value + dt * 3.6);
     u.uSurge.value = damp(u.uSurge.value, this.alive ? this.surge : 0, 8, dt);
     u.uAlive.value = damp(u.uAlive.value, this.alive ? 1 : 0, 3, dt);
 
@@ -296,7 +329,31 @@ export class Craft {
   sync(t) {
     const d = this.standoffDist;
     this.root.position.set(this.nx * d + this.tx * this.u, ARENA.playY, this.nz * d + this.tz * this.u);
-    this.root.rotation.y = this.yaw;
+    this.root.rotation.y = this.yaw + this.victorySpin;
+
+    if (this.victory > 0) {
+      this.victory += this._dt;
+      this.victorySpin += this._dt * 0.62;
+      // Lift, ease-out, with the hover bob still running underneath so the
+      // hull never looks pinned in the air.
+      const rise = 1 - Math.pow(1 - clamp(this.victory / 1.6, 0, 1), 3);
+      this.bobPivot.position.y = rise * 2.15 + Math.sin(t * 1.9) * 0.14;
+      this.bobPivot.rotation.z = Math.sin(t * 1.1) * 0.05;
+      this.hullPivot.rotation.x = damp(this.hullPivot.rotation.x, -0.30, 3.2, this._dt);
+      this.hullPivot.rotation.z = damp(this.hullPivot.rotation.z, 0, 3.2, this._dt);
+
+      // Drives wide open, and the hull's own emissive pushed well past the
+      // level anything reaches in play.
+      // Pushed hard: the result card's scrim sits over this shot, and anything
+      // lit only by the deck reads as a silhouette through it.
+      const surge = 0.75 + 0.25 * Math.sin(t * 5.5);
+      for (const th of this.thrusters) th.scale.set(1.6, 1, 2.6 + surge * 1.1);
+      this.thrustMat.opacity = 1;
+      this.hoverGlow.material.opacity = 0.38;
+      this.mats.metalRed.emissiveIntensity = 9.5 + surge * 3.0;
+      this.deflector.scale.set(1, 1, 1);
+      return;
+    }
 
     if (this.alive) {
       // Bank into the turn, pitch back under acceleration.

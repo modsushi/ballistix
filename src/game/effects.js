@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { Sparks } from '../gfx/particles.js';
+import { FlarePool } from '../gfx/flare.js';
 import { ARENA, PLAYERS } from '../core/config.js';
 import { ELEMENT_COLOR } from './pinball.js';
 import { BLACKHOLE, PINBALL } from '../core/config.js';
@@ -107,6 +108,7 @@ export class Effects {
     this.sparks = new Sparks(preset.sparks, Math.min(devicePixelRatio || 1, 2));
     scene.add(this.sparks.points);
     this.rings = new RingPool(scene, preset.sparks > 400 ? 12 : 7);
+    this.flares = new FlarePool(scene, preset.sparks > 400 ? 10 : 6);
 
     // Flash + slow-motion requests are read and cleared by the game loop.
     this.flash = 0;
@@ -119,32 +121,95 @@ export class Effects {
   update(dt, camera) {
     this.sparks.update(dt, camera);
     this.rings.update(dt);
+    this.flares.update(dt);
     this.flash = Math.max(0, this.flash - dt * 4.2);
     this.radial = Math.max(0, this.radial - dt * 3.4);
   }
 
   // ----------------------------------------------------------- deflection --
-  /** @param {object} e event from collide.js */
-  deflect(e) {
+  /**
+   * The strike. This is the single most repeated moment in the game — a match
+   * is a few hundred of these — so it carries the most weight per unit of cost
+   * anywhere in the project.
+   *
+   * Four layers, each doing a job the others can't:
+   *   · a flare, for the instant of contact
+   *   · plate fragments, which is what makes it read as a *block* being struck
+   *     rather than a ball touching a surface
+   *   · streak sparks along the outgoing path, which draw the eye to where the
+   *     orb is about to be
+   *   · a ring on the deck to mark where the contact happened
+   *
+   * @param {object} e     event from collide.js
+   * @param {number} tier  the deflector's current score multiplier, 1+. Hits
+   *                       get visibly bigger as a chain builds — the reward has
+   *                       to be visible in the world, not just on the HUD.
+   */
+  deflect(e, tier = 1) {
     const c = e.craft;
     const p = PLAYERS[c.index];
     const speed01 = clamp((e.speed - 15) / 25, 0, 1);
     const dirx = -c.nx, dirz = -c.nz;
+    const q = this.preset.sparks / 520 + 0.4;
+    const hot = clamp((tier - 1) / 4, 0, 1);      // 0 at ×1, 1 from ×5 up
 
+    // --- the flash of contact ----------------------------------------------
+    this.flares.spawn(
+      e.x, ARENA.playY + 0.15, e.z,
+      1.05 + speed01 * 0.7 + hot * 0.8, 0.115 + hot * 0.03,
+      p.color, rand(-0.5, 0.5),
+    );
+
+    // --- plate fragments ----------------------------------------------------
+    // Chips off the deflector face, thrown wide and tumbling under gravity.
+    // They outlive the sparks, so debris is still settling when the orb has
+    // gone — which is what gives the hit a sense of mass.
     this.sparks.burst({
       at: [e.x, ARENA.playY, e.z],
-      dir: [dirx, 0.35, dirz],
-      spread: 0.62,
-      count: Math.round(lerp(8, 20, speed01) * (this.preset.sparks / 520 + 0.4)),
-      speedMin: 6, speedMax: 16 + speed01 * 14,
-      lifeMin: 0.16, lifeMax: 0.42,
-      sizeMin: 5, sizeMax: 13,
+      dir: [dirx, 0.75, dirz], spread: 0.95,
+      count: Math.round(lerp(7, 14, speed01) * q * (1 + hot * 0.5)),
+      speedMin: 5, speedMax: 15 + speed01 * 10,
+      lifeMin: 0.45, lifeMax: 1.05,
+      // Large, because a shard only lights a sliver of its sprite — roughly a
+      // third of the width and a tenth of the height. At the sizes the other
+      // emitters use, a fragment is three pixels of dark grey and invisible.
+      sizeMin: 14, sizeMax: 28,
+      // Hot steel, not grey plastic: unlit fragments vanish against a deck this
+      // dark, and these have to stay readable all the way down.
+      color: 0xdce9f7, color2: p.color,
+      kind: 2, drag: 1.2, grav: -17, jitter: 0.35,
+    });
+
+    // --- streak sparks, tight along the outgoing path -----------------------
+    this.sparks.burst({
+      at: [e.x, ARENA.playY, e.z],
+      dir: [dirx, 0.3, dirz], spread: 0.42,
+      count: Math.round(lerp(12, 26, speed01) * q * (1 + hot * 0.6)),
+      speedMin: 9, speedMax: 22 + speed01 * 18,
+      lifeMin: 0.14, lifeMax: 0.38,
+      sizeMin: 8, sizeMax: 20,
       color: p.color, color2: 0xffffff,
       kind: 1, drag: 3.4, grav: -7, jitter: 0.3,
     });
 
-    // A tight flat ring on the deck marks exactly where contact happened.
-    this.rings.spawn(e.x, ARENA.playY - 0.75, e.z, 0.25, 2.4 + speed01 * 1.6, 0.42, p.color);
+    // --- a few slow embers so the spot keeps glowing after the crack --------
+    this.sparks.burst({
+      at: [e.x, ARENA.playY, e.z],
+      dir: [dirx, 0.6, dirz], spread: 1.0,
+      count: Math.round(lerp(3, 6, speed01) * q),
+      speedMin: 1.5, speedMax: 6,
+      lifeMin: 0.35, lifeMax: 0.85,
+      sizeMin: 11, sizeMax: 24,
+      color: 0xffffff, color2: p.color,
+      kind: 0, drag: 2.2, grav: -2.5, jitter: 0.4,
+    });
+
+    // --- wave ---------------------------------------------------------------
+    // Flat on the deck only. A ring standing in the plane of impact was tried
+    // here and read as a shield bubble around the craft rather than as a wave —
+    // at this camera pitch a vertical circle centred on the hull is a dome.
+    this.rings.spawn(e.x, ARENA.playY - 0.75, e.z,
+      0.25, 2.4 + speed01 * 1.6 + hot * 1.0, 0.42, p.color);
     this.arena.shock(e.x, e.z, 0.55 + speed01 * 0.5, p.color);
     this.arena.hitBarrier(c.index, e.u01, 0.18);
 
@@ -152,8 +217,11 @@ export class Effects {
     this.audio.deflect(speed01, 0.75 + e.power * 0.35, c.index / 3);
 
     if (c.index === 0) {
-      this.cam.shake(0.09 + speed01 * 0.10);
-      this.cam.punch(0.7 + speed01 * 0.9);
+      this.cam.shake(0.09 + speed01 * 0.10 + hot * 0.05);
+      this.cam.punch(0.7 + speed01 * 0.9 + hot * 0.6);
+      // A shove along the outgoing direction. Small, but it's the difference
+      // between the camera watching the hit and being part of it.
+      this.cam.kick(dirx, dirz, 0.06 + speed01 * 0.06);
     } else {
       this.cam.shake(0.035 + speed01 * 0.03);
     }
@@ -438,6 +506,93 @@ export class Effects {
     if (e.by === 0) this.cam.punch(0.9);
   }
 
+  // ------------------------------------------------------------- victory --
+  /**
+   * The celebration fountain.
+   *
+   * Paper confetti would be the obvious reference and it would look imported
+   * from another game — nothing else in this arena is matte, or falls without
+   * glowing. So the deck throws what it is made of: charged chips in the four
+   * pilot colours, fired up out of the hull, tumbling as they arc over. It
+   * reads as confetti at a glance and as this game's own material up close.
+   *
+   * @param {number} power 0..1+, scales the volley — used to build across the
+   *                       score tally rather than firing one wall of debris.
+   */
+  confetti(craft, power = 1) {
+    const p = PLAYERS[craft.index];
+    const pos = craft.worldPos(_vpos);
+    const n = this.preset.sparks;
+    const q = n / 520 + 0.45;
+
+    // Chips: the confetti proper. High, slow, heavy tumble, long life.
+    this.sparks.burst({
+      at: [pos.x, pos.y + 1.4, pos.z],
+      dir: [0, 1, 0], spread: 0.62,
+      count: Math.round(26 * q * power),
+      speedMin: 9, speedMax: 22,
+      lifeMin: 1.3, lifeMax: 2.6,
+      sizeMin: 16, sizeMax: 30,
+      color: p.color, color2: 0xffffff,
+      kind: 2, drag: 0.55, grav: -11, jitter: 1.6,
+    });
+    // A second colour pass so the fall isn't monochrome — the rivals' colours,
+    // which is the only place all four ever appear together.
+    this.sparks.burst({
+      at: [pos.x, pos.y + 1.4, pos.z],
+      dir: [0, 1, 0], spread: 0.8,
+      count: Math.round(16 * q * power),
+      speedMin: 7, speedMax: 19,
+      lifeMin: 1.1, lifeMax: 2.3,
+      sizeMin: 14, sizeMax: 26,
+      color: PLAYERS[(craft.index + 1) % 4].color,
+      color2: PLAYERS[(craft.index + 2) % 4].color,
+      kind: 2, drag: 0.6, grav: -11, jitter: 1.8,
+    });
+    // Bright streaks off the drives, straight up and gone.
+    this.sparks.burst({
+      at: [pos.x, pos.y + 0.6, pos.z],
+      dir: [0, 1, 0], spread: 0.3,
+      count: Math.round(14 * q * power),
+      speedMin: 16, speedMax: 34,
+      lifeMin: 0.3, lifeMax: 0.7,
+      sizeMin: 8, sizeMax: 18,
+      color: 0xffffff, color2: p.color,
+      kind: 1, drag: 1.9, grav: -9, jitter: 0.5,
+    });
+    // Embers that hang in the air over the hull.
+    this.sparks.burst({
+      at: [pos.x, pos.y + 1.8, pos.z],
+      dir: [0, 1, 0], spread: 1.0,
+      count: Math.round(9 * q * power),
+      speedMin: 1.5, speedMax: 7,
+      lifeMin: 0.9, lifeMax: 1.9,
+      sizeMin: 14, sizeMax: 28,
+      color: 0xffe9a8, color2: p.color,
+      kind: 0, drag: 1.4, grav: -1.2, jitter: 1.4,
+    });
+
+    this.flares.spawn(pos.x, pos.y + 1.5, pos.z, 2.2 + power, 0.16, 0xffffff, rand(-0.6, 0.6));
+    this.rings.spawn(pos.x, ARENA.playY - 0.8, pos.z, 0.5, 8 + power * 3, 0.8, p.color);
+    this.arena.shock(pos.x, pos.z, 1.1 * power, p.color);
+  }
+
+  /**
+   * The moment the last rival goes down. One big volley plus the pose.
+   *
+   * A rival's win still gets the hero shot and a volley — you should be able to
+   * see who beat you — but the full shower is the player's, and so is the
+   * screen flash. Celebrating someone else's victory at you is obnoxious.
+   */
+  victory(craft, isPlayer) {
+    this.confetti(craft, isPlayer ? 1.35 : 0.6);
+    if (!isPlayer) return;
+    this.flash = 0.3;
+    this.flashColor.set(0xffe9b0).convertSRGBToLinear();
+    this.cam.punch(3.2);
+    this.cam.shake(0.3);
+  }
+
   /** Salvage paid out as a point. Fires at the pilot who earned it. */
   salvagePoint(craft) {
     const p = PLAYERS[craft.index];
@@ -691,5 +846,8 @@ export class Effects {
   dispose() {
     this.sparks.dispose();
     this.rings.dispose();
+    this.flares.dispose();
   }
 }
+
+const _vpos = new THREE.Vector3();

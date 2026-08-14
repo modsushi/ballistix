@@ -400,7 +400,26 @@ body::after {
 .pod.dead .pod-name { text-decoration: line-through; text-decoration-thickness: 1.5px; }
 
 .wave-readout { text-align: right; padding-top: 2px; }
-.wave-label { font-size: 8.5px; letter-spacing: 0.28em; color: var(--ink-faint); }
+.wave-label { font-size: 8.5px; letter-spacing: 0.28em; color: var(--ink-faint); margin-top: 7px; }
+
+/* Score sits above the orb count and outsizes it: it is the number the player
+   is playing for, and the only one on the HUD that only ever goes up. */
+.score-label {
+  font-size: 8.5px; letter-spacing: 0.28em;
+  color: rgba(255, 215, 110, 0.6);
+}
+.score-value {
+  font-family: var(--mono); font-size: clamp(26px, 7vw, 38px); font-weight: 700;
+  line-height: 1.02; color: var(--gold);
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 20px rgba(255, 215, 110, 0.55);
+}
+.score-value.bump { animation: scoreBump 0.42s var(--ease-snap); }
+@keyframes scoreBump {
+  0%   { transform: scale(1); }
+  30%  { transform: scale(1.16); color: #fff; text-shadow: 0 0 26px rgba(255,255,255,0.9); }
+  100% { transform: scale(1); }
+}
 .wave-value {
   font-family: var(--mono); font-size: clamp(20px, 5.5vw, 28px); font-weight: 700;
   line-height: 1; color: var(--ink);
@@ -679,10 +698,13 @@ body::after {
 .combo.show { opacity: 1; transform: translateY(-50%) translateX(0); }
 .combo b {
   display: block;
-  font-family: var(--mono); font-size: clamp(26px, 7vw, 40px); font-weight: 700;
+  font-family: var(--mono); font-size: clamp(30px, 8vw, 46px); font-weight: 700;
   line-height: 1; color: var(--gold);
   font-variant-numeric: tabular-nums;
   text-shadow: 0 0 22px rgba(255, 215, 110, 0.75);
+  /* Grows inward: the step animation scales past 1.7, and from the centre that
+     pushes the digits off the right edge of the screen. */
+  transform-origin: right center;
 }
 .combo i {
   font-style: normal; font-size: 8.5px; letter-spacing: 0.22em;
@@ -690,21 +712,100 @@ body::after {
 }
 .combo.tick b { animation: comboTick 0.42s var(--ease-snap); }
 @keyframes comboTick { 0% { transform: scale(1); } 35% { transform: scale(1.32); } 100% { transform: scale(1); } }
+/* Stepping up a multiplier is the reward moment the chain exists for, so it
+   gets a bigger, hotter beat than the per-hit tick. */
+.combo.step b { animation: comboStep 0.7s var(--ease-snap); }
+@keyframes comboStep {
+  0%   { transform: scale(1); }
+  22%  { transform: scale(1.75); color: #fff; text-shadow: 0 0 40px #fff, 0 0 80px rgba(255,215,110,0.9); }
+  100% { transform: scale(1); }
+}
+
+/* --- score popups -----------------------------------------------------
+   One per deflection, floating off the point of contact. Positioned by
+   transform on the outer node; the rise animates the inner span, so the two
+   never fight over the same property. */
+.pops { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.pop { position: absolute; left: 0; top: 0; will-change: transform; }
+.pop span {
+  display: block;
+  transform: translate(-50%, -50%);
+  opacity: 0;
+  font-family: var(--mono); font-weight: 700;
+  font-size: clamp(17px, 4.4vw, 23px);
+  font-variant-numeric: tabular-nums;
+  color: #fff;
+  text-shadow: 0 0 16px rgba(120, 210, 255, 0.9), 0 2px 10px rgba(0,0,0,0.75);
+  animation: popRise 0.82s var(--ease-out) forwards;
+}
+.pop.hot span {
+  font-size: clamp(22px, 6vw, 32px);
+  color: var(--gold);
+  text-shadow: 0 0 22px rgba(255, 215, 110, 0.95), 0 2px 12px rgba(0,0,0,0.8);
+}
+@keyframes popRise {
+  0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.65); }
+  16%  { opacity: 1; transform: translate(-50%, -70%) scale(1.12); }
+  34%  { transform: translate(-50%, -84%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -190%) scale(0.94); }
+}
 
 /* ==========================================================================
    Result screen
    ========================================================================== */
 
-/* The result screen carries the most content of any screen, so it gets a
-   heavier scrim than the menu — the standings have to stay legible over a
-   brightly lit arena. */
+/* Light scrim, and the panel carries its own glass instead.
+   The winner's craft is posing behind this screen with confetti coming off it —
+   a full-screen wash heavy enough to make body text comfortable would throw all
+   of that away, so the contrast is bought locally, by the card. */
 #result {
   background:
-    radial-gradient(125% 95% at 50% 45%, rgba(4, 8, 18, 0.62) 0%, rgba(2, 4, 10, 0.93) 78%);
-  backdrop-filter: blur(11px) saturate(0.9); -webkit-backdrop-filter: blur(11px) saturate(0.9);
+    radial-gradient(130% 100% at 50% 42%, rgba(4, 8, 18, 0.30) 0%, rgba(2, 4, 10, 0.80) 82%);
+  backdrop-filter: blur(3px) saturate(1.0); -webkit-backdrop-filter: blur(3px) saturate(1.0);
 }
 
-.result-inner { width: min(620px, 100%); }
+.result-inner {
+  width: min(620px, 100%);
+  /* Tighter than the other screens: this one has the most to say and a laptop
+     in landscape has the least room to say it in. */
+  gap: clamp(8px, 2.1vh, 18px);
+  padding: clamp(14px, 2.6vw, 22px) clamp(14px, 3.6vw, 30px);
+  background: linear-gradient(180deg, rgba(9, 15, 28, 0.86), rgba(5, 9, 18, 0.92));
+  backdrop-filter: blur(16px) saturate(1.15); -webkit-backdrop-filter: blur(16px) saturate(1.15);
+  box-shadow: 0 0 0 1px var(--glass-edge) inset, 0 30px 90px -34px rgba(0, 0, 0, 0.95);
+  clip-path: polygon(16px 0, calc(100% - 16px) 0, 100% 16px, 100% calc(100% - 16px),
+                     calc(100% - 16px) 100%, 16px 100%, 0 calc(100% - 16px), 0 16px);
+  animation: cardIn 0.6s var(--ease-out) both;
+}
+@keyframes cardIn { from { opacity: 0; transform: translateY(16px) scale(0.985); } }
+#result.won .result-inner {
+  box-shadow: 0 0 0 1px rgba(255, 215, 110, 0.3) inset,
+              0 30px 90px -34px rgba(0, 0, 0, 0.95),
+              0 0 70px -14px rgba(255, 215, 110, 0.28);
+}
+
+/* --- the sequence ---------------------------------------------------- */
+.result-badge { animation: stampIn 0.5s var(--ease-snap) 0.14s both; }
+@keyframes stampIn {
+  0%   { opacity: 0; transform: scale(1.85); }
+  55%  { opacity: 1; }
+  100% { opacity: 1; transform: scale(1); }
+}
+.result-title { animation: dealIn 0.5s var(--ease-out) 0.3s both; }
+.stats .stat.wide { animation: dealIn 0.5s var(--ease-out) 0.95s both; }
+.stats .stat.deal { animation: dealIn 0.45s var(--ease-out) both; }
+.result-actions { animation: dealIn 0.5s var(--ease-out) 1.95s both; }
+@keyframes dealIn { from { opacity: 0; transform: translateY(11px) scale(0.95); } }
+
+/* The total arriving. This is the payoff of the whole screen, so it is the one
+   thing allowed to blow out to white. */
+.stat.wide b.landed { animation: scoreLand 0.85s var(--ease-snap); }
+@keyframes scoreLand {
+  0%   { transform: scale(1); }
+  24%  { transform: scale(1.26); color: #fff;
+         text-shadow: 0 0 46px #fff, 0 0 96px rgba(255, 215, 110, 0.9); }
+  100% { transform: scale(1); }
+}
 .result-head { display: flex; flex-direction: column; align-items: center; gap: 14px; }
 .result-actions {
   display: flex; flex-direction: column; align-items: center; gap: 10px;
@@ -726,7 +827,7 @@ body::after {
   color: var(--danger);
 }
 .result-title {
-  font-size: clamp(28px, 9vw, 58px); font-weight: 800;
+  font-size: clamp(26px, 7vw, 44px); font-weight: 800;
   letter-spacing: -0.02em; text-align: center; line-height: 1;
   background: linear-gradient(178deg, #fff, #a9cfe8 90%);
   -webkit-background-clip: text; background-clip: text; color: transparent;
@@ -748,7 +849,12 @@ body::after {
   font-family: var(--mono); font-size: 12px; font-weight: 700;
   color: var(--ink-faint); min-width: 22px;
 }
+.stand-row.first {
+  background: linear-gradient(90deg, rgba(255, 215, 110, 0.13), rgba(9, 15, 28, 0.82) 58%);
+  box-shadow: 0 0 0 1px rgba(255, 215, 110, 0.32) inset;
+}
 .stand-row.first .stand-rank { color: var(--gold); }
+.stand-row.first .stand-name { color: #fff; }
 .stand-dot { width: 8px; height: 8px; background: var(--c); box-shadow: 0 0 10px var(--c); transform: rotate(45deg); }
 .stand-name { flex: 1; font-size: 12.5px; font-weight: 600; letter-spacing: 0.12em; color: var(--ink); }
 .stand-val { font-family: var(--mono); font-size: 12px; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
@@ -762,6 +868,15 @@ body::after {
   font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums;
 }
 .stat i { font-style: normal; font-size: 9px; letter-spacing: 0.2em; color: var(--ink-faint); }
+
+/* The score is the headline of the run, so it breaks the row and outsizes the
+   rest of the line. */
+.stat.wide { flex-basis: 100%; }
+.stat.wide b {
+  font-size: clamp(34px, 11vw, 54px); line-height: 1;
+  color: var(--gold); text-shadow: 0 0 30px rgba(255, 215, 110, 0.45);
+}
+.stat.wide i { font-size: 10px; letter-spacing: 0.36em; color: rgba(255, 215, 110, 0.7); }
 
 /* ==========================================================================
    Responsive

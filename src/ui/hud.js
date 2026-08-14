@@ -86,7 +86,10 @@ export class HUD {
       bhFill: el('bhFill'),
       bhWord: el('bhWord'),
       combo: el('combo'),
-      comboNum: el('combo').querySelector('b'),
+      comboNum: el('comboNum'),
+      comboMult: el('comboMult'),
+      scoreValue: el('scoreValue'),
+      pops: el('pops'),
       boot: el('boot'),
       loadFill: el('loadFill'),
       loadText: el('loadText'),
@@ -106,6 +109,8 @@ export class HUD {
     this._scores = [-1, -1, -1, -1];
     this._orbs = -1;
     this._combo = -1;
+    this._mult = -1;
+    this._points = -1;
     this._arc = -1;
     this._arcState = '';
     this._salv = -1;
@@ -115,10 +120,15 @@ export class HUD {
     this._bh = -1;
     this._bhLive = null;
     this._countTimer = null;
+    this._popCursor = 0;
+    this._pops = [];
+    this._seqTimers = [];
+    this._countRaf = 0;
     // No readout for anything that isn't in the match.
     if (!PINBALL.enabled) this.dom.pinMeter.style.display = 'none';
     if (!BLACKHOLE.enabled) this.dom.bhMeter.style.display = 'none';
     this._buildPods();
+    this._buildPops();
     this._setControlHint();
   }
 
@@ -159,6 +169,24 @@ export class HUD {
     this.dom.selfPips.innerHTML = '';
     this.pips[0] = this._pipStrip(this.dom.selfPips);
     this.pods[0] = el('selfPod');
+  }
+
+  /**
+   * Score popups are pooled and positioned with `transform` only.
+   *
+   * One of these fires on every deflection, in the middle of the busiest frame
+   * of the match — creating a node and writing `left`/`top` would put a layout
+   * and a style recalc exactly there. A fixed ring of nodes moved on the
+   * compositor costs nothing measurable.
+   */
+  _buildPops(n = 14) {
+    for (let i = 0; i < n; i++) {
+      const d = document.createElement('div');
+      d.className = 'pop';
+      d.innerHTML = '<span></span>';
+      this.dom.pops.appendChild(d);
+      this._pops.push({ node: d, span: d.firstElementChild });
+    }
   }
 
   _setControlHint() {
@@ -268,16 +296,59 @@ export class HUD {
     if (grew) this._replay(this.dom.orbCount, 'bump');
   }
 
-  setCombo(n) {
-    if (this._combo === n) return;
+  /** The running arcade score. Lives are the pip strip; this is the reward. */
+  setPoints(v) {
+    if (this._points === v) return;
+    const grew = v > this._points && this._points >= 0;
+    this._points = v;
+    this.dom.scoreValue.textContent = String(v);
+    if (grew) this._replay(this.dom.scoreValue, 'bump');
+  }
+
+  /**
+   * @param {number} n     consecutive deflections
+   * @param {number} mult  what the next one will pay
+   *
+   * The multiplier is the headline and the chain the small print: the player
+   * cares what a hit is worth, not how many they have strung together. The
+   * panel only appears once the multiplier does — a "×1" is not news.
+   */
+  setCombo(n, mult = 1) {
+    if (this._combo === n && this._mult === mult) return;
+    const stepped = mult > this._mult && this._mult > 0;
     this._combo = n;
-    if (n < 3) {
+    this._mult = mult;
+
+    if (mult < 2) {
       this.dom.combo.classList.remove('show');
       return;
     }
+    this.dom.comboMult.textContent = `×${mult}`;
     this.dom.comboNum.textContent = String(n);
     this.dom.combo.classList.add('show');
-    this._replay(this.dom.combo, 'tick');
+    // Both classes off before either goes on: leaving `step` applied would let
+    // it keep winning the cascade and the per-hit tick would never play again.
+    this.dom.combo.classList.remove('tick', 'step');
+    void this.dom.combo.offsetWidth;
+    this.dom.combo.classList.add(stepped ? 'step' : 'tick');
+  }
+
+  /**
+   * A floating award at a point on screen.
+   *
+   * @param {number} x  CSS pixels
+   * @param {number} y  CSS pixels
+   */
+  pop(x, y, text, kind = '') {
+    const it = this._pops[this._popCursor];
+    this._popCursor = (this._popCursor + 1) % this._pops.length;
+    it.span.textContent = text;
+    it.node.className = 'pop' + (kind ? ` ${kind}` : '');
+    it.node.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0)`;
+    // Restart the rise even if this node is still mid-flight from a moment ago.
+    it.span.style.animation = 'none';
+    void it.span.offsetWidth;
+    it.span.style.animation = '';
   }
 
   /**
@@ -396,11 +467,15 @@ export class HUD {
     this._scores = [-1, -1, -1, -1];
     this._orbs = -1;
     this._combo = -1;
+    this._mult = -1;
+    this._points = -1;
     for (let i = 0; i < 4; i++) {
       this.pods[i]?.classList.remove('dead', 'hit');
       this.setScore(i, RULES.startPoints);
     }
     this.dom.combo.classList.remove('show');
+    for (const p of this._pops) p.span.style.animation = 'none';
+    this._clearSequence();
     this.clearToasts();
     this._arc = -1;
     this._arcState = '';
@@ -422,8 +497,27 @@ export class HUD {
    * @param {{order:number[], stats:object}} result
    *   `order` is finishing position, best first.
    */
-  showResult(result) {
+  /**
+   * The result screen, played as a sequence rather than printed.
+   *
+   * Everything arrives on a beat: the verdict stamps, the board builds a row at
+   * a time, the score counts up out of zero, and the breakdown lands last. It
+   * takes about three seconds, which is roughly how long a player sits looking
+   * at a result before reaching for the button anyway — the difference is that
+   * those three seconds now have something happening in them.
+   *
+   * @param {object} result
+   * @param {{tick?:(p:number)=>void, beat?:(i:number)=>void,
+   *          land?:(won:boolean)=>void}} [hooks]
+   *   Audio and arena reactions, injected so the HUD keeps knowing nothing
+   *   about either.
+   */
+  showResult(result, hooks = {}) {
+    this._clearSequence();
     const won = result.order[0] === 0;
+    const s = result.stats;
+
+    this.dom.result.classList.toggle('won', won);
     this.dom.resultBadge.textContent = won ? 'VICTORY' : 'ELIMINATED';
     this.dom.resultBadge.classList.toggle('defeat', !won);
     this.dom.resultTitle.textContent = won
@@ -436,7 +530,7 @@ export class HUD {
       const row = document.createElement('div');
       row.className = 'stand-row' + (rank === 0 ? ' first' : '');
       row.style.setProperty('--c', p.css);
-      row.style.animationDelay = `${rank * 0.08}s`;
+      row.style.animationDelay = `${0.5 + rank * 0.11}s`;
       const pts = result.finalScores[pid];
       row.innerHTML = `
         <div class="stand-rank">${rank + 1}</div>
@@ -446,15 +540,69 @@ export class HUD {
       this.dom.standings.appendChild(row);
     });
 
-    const s = result.stats;
+    // The score starts at zero and is counted into place; the rest of the
+    // breakdown is dealt out behind it.
+    const breakdown = [
+      [`×${s.bestMultiplier}`, 'BEST MULTIPLIER'],
+      [s.deflections, 'DEFLECTIONS'],
+      [s.bestChain, 'BEST CHAIN'],
+      [s.bricks, 'BLOCKS BROKEN'],
+      [s.knockouts, 'KNOCKOUTS'],
+      [this._fmtTime(s.duration), 'DURATION'],
+    ];
     this.dom.matchStats.innerHTML = `
-      <div class="stat"><b>${s.deflections}</b><i>DEFLECTIONS</i></div>
-      <div class="stat"><b>${s.bestChain}</b><i>BEST CHAIN</i></div>
-      <div class="stat"><b>${s.bricks}</b><i>BLOCKS BROKEN</i></div>
-      <div class="stat"><b>${s.knockouts}</b><i>KNOCKOUTS</i></div>
-      <div class="stat"><b>${this._fmtTime(s.duration)}</b><i>DURATION</i></div>`;
+      <div class="stat wide"><b id="finalScore">0</b><i>SCORE</i></div>`
+      + breakdown.map(([v, k], i) =>
+        `<div class="stat deal" style="animation-delay:${1.25 + i * 0.075}s"><b>${v}</b><i>${k}</i></div>`,
+      ).join('');
+    const scoreNode = el('finalScore');
 
     this.showScreen(this.dom.result);
+
+    // One row of the board per beat, so the arena can answer each of them.
+    result.order.forEach((_, rank) => {
+      this._after(520 + rank * 110, () => hooks.beat?.(rank));
+    });
+    this._after(1050, () => this._countTo(scoreNode, s.score, 1100, hooks, won));
+  }
+
+  /**
+   * Count a number up into place.
+   *
+   * Eased, not linear: a linear tally arrives at its total with no sense of
+   * settling, and the last few digits are where the drama is. Driven off rAF so
+   * it shares the frame budget with the celebration rather than fighting it on
+   * its own timer.
+   */
+  _countTo(node, to, dur, hooks, won) {
+    if (!node) return;
+    const t0 = performance.now();
+    let last = -1;
+    const step = (now) => {
+      const k = Math.min(1, (now - t0) / dur);
+      const e = 1 - Math.pow(1 - k, 2.6);
+      const v = Math.round(to * e);
+      if (v !== last) {
+        last = v;
+        node.textContent = String(v);
+        hooks.tick?.(k);
+      }
+      if (k < 1) { this._countRaf = requestAnimationFrame(step); return; }
+      this._countRaf = 0;
+      node.classList.add('landed');
+      hooks.land?.(won);
+    };
+    this._countRaf = requestAnimationFrame(step);
+  }
+
+  _after(ms, fn) { this._seqTimers.push(setTimeout(fn, ms)); }
+
+  /** Kill anything still in flight — the player may have hit RUN IT BACK. */
+  _clearSequence() {
+    for (const t of this._seqTimers) clearTimeout(t);
+    this._seqTimers.length = 0;
+    if (this._countRaf) cancelAnimationFrame(this._countRaf);
+    this._countRaf = 0;
   }
 
   _fmtTime(sec) {

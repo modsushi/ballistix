@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import {
-  ARC, ARENA, BLACKHOLE, BRICKS, DIFFICULTY, ORB, PADDLE, PINBALL, PLAYERS, RULES,
+  ARC, ARENA, BLACKHOLE, BRICKS, DIFFICULTY, ORB, PADDLE, PINBALL, PLAYERS, RULES, SCORING,
 } from '../core/config.js';
 import { clamp, damp, lerp, rand } from '../core/math.js';
 import { Arena } from './arena.js';
@@ -42,6 +42,8 @@ const MAX_CATCHUP = 0.25;
 // When "3" lands. The intro runs 3.4s, so the digits fall on 0.4/1.4/2.4 and
 // "1" clears just as the serve charge takes over.
 const INTRO_FIRST_TICK = 0.4;
+
+const _proj = new THREE.Vector3();
 
 export const State = {
   INTRO: 'intro',
@@ -146,8 +148,12 @@ export class Game {
     this.salvage = PLAYERS.map(() => 0);
     this.alive = [true, true, true, true];
     this.eliminationOrder = [];
-    this.stats = { deflections: 0, bestChain: 0, knockouts: 0, bricks: 0, duration: 0 };
+    this.stats = {
+      deflections: 0, bestChain: 0, knockouts: 0, bricks: 0, duration: 0,
+      score: 0, bestMultiplier: 1,
+    };
     this.chain = 0;
+    this.score = 0;
     this.matchTime = 0;
     this.playTime = 0;
     this.serveTimer = 0;
@@ -155,9 +161,16 @@ export class Game {
     this.pendingServes = [];
     this.lastConceder = -1;
 
+    // Any victory pose from the previous match is torn down here, along with
+    // the camera that was holding on it.
+    this.victoryCraft = null;
+    this._nextVolley = 0;
+    this.camera.clearVictory();
+
     for (const c of this.crafts) {
       c.alive = true;
       c.dying = 0;
+      c.clearCelebrate();
       c.arc = ARC.startCharge;
       c.arcActive = 0;
       c.arcJustFired = false;
@@ -195,7 +208,8 @@ export class Game {
     }
     this.hud.resetMatch();
     this.hud.setOrbCount(0);
-    this.hud.setCombo(0);
+    this.hud.setCombo(0, 1);
+    this.hud.setPoints(0);
     this.hud.setSalvage(0, BRICKS.perPoint);
     this.effects.clear();
     this.arena.setCharge(0);
@@ -351,13 +365,14 @@ export class Game {
   _handleEvent(e) {
     switch (e.type) {
       case 'deflect': {
-        this.effects.deflect(e);
-        if (e.craft.index === 0) {
-          this.chain++;
-          this.stats.deflections++;
-          this.stats.bestChain = Math.max(this.stats.bestChain, this.chain);
-          this.hud.setCombo(this.chain);
-        }
+        const mine = e.craft.index === 0;
+        // Rivals deflect at ×1 forever: the escalating spectacle is the
+        // player's reward, and handing it to the AI would make three quarters
+        // of the hits on screen shout for attention they haven't earned.
+        this.effects.deflect(e, mine ? this.multiplier : 1);
+        // Attract runs pilot 0 on the AI: it should look like a match, not
+        // quietly bank a score and ping the multiplier chime over the menu.
+        if (mine && !this.attract) this._scoreDeflect(e);
         e.orb.setTint(PLAYERS[e.craft.index].color);
         break;
       }
@@ -388,6 +403,58 @@ export class Game {
         this._concede(e);
         break;
     }
+  }
+
+  /**
+   * The player's own deflection: extend the chain, bank the score, and put the
+   * award on screen where the hit happened.
+   *
+   * The multiplier is read *after* the chain extends, so the very first hit of
+   * a rally already pays at the rate the HUD is showing.
+   */
+  _scoreDeflect(e) {
+    const was = this.multiplier;
+    this.chain++;
+    this.stats.deflections++;
+    this.stats.bestChain = Math.max(this.stats.bestChain, this.chain);
+
+    const mult = this.multiplier;
+    const award = SCORING.perDeflect * mult;
+    this.score += award;
+    this.stats.score = this.score;
+    this.stats.bestMultiplier = Math.max(this.stats.bestMultiplier, mult);
+
+    this.hud.setCombo(this.chain, mult);
+    this.hud.setPoints(this.score);
+
+    // The award floats off the point of contact rather than off the HUD: the
+    // player is watching the deck, and a number that appears where they are
+    // already looking is read without a glance away.
+    const [sx, sy] = this._toScreen(e.x, ARENA.playY + 2.0, e.z);
+    this.hud.pop(sx, sy, `+${award}`, mult >= 3 ? 'hot' : '');
+
+    if (mult > was) this.audio.chainUp(mult);
+
+    // Hit-stop. A couple of frames of frozen time on a solid hit, which the eye
+    // reads as force — the same trick the goal uses, scaled right down. Below a
+    // quarter speed there is no force to sell, and stuttering through a slow
+    // opening rally would just feel like a dropped frame.
+    const speed01 = clamp((e.speed - 15) / 25, 0, 1);
+    if (speed01 > 0.25) this._freeze = Math.max(this._freeze, 0.012 + speed01 * 0.022);
+  }
+
+  /** World point to CSS pixels, for HUD elements that track the arena. */
+  _toScreen(x, y, z) {
+    _proj.set(x, y, z).project(this.camera.cam);
+    return [
+      (_proj.x * 0.5 + 0.5) * window.innerWidth,
+      (-_proj.y * 0.5 + 0.5) * window.innerHeight,
+    ];
+  }
+
+  /** Score multiplier earned by the current chain. */
+  get multiplier() {
+    return clamp(1 + Math.floor(this.chain / SCORING.chainPerStep), 1, SCORING.maxMultiplier);
   }
 
   /**
@@ -463,8 +530,10 @@ export class Game {
     this.effects.goal(e, wasPlayer);
 
     if (wasPlayer) {
+      // The chain is the whole reward loop, so conceding has to cost it — a
+      // multiplier that survives a goal isn't worth defending.
       this.chain = 0;
-      this.hud.setCombo(0);
+      this.hud.setCombo(0, 1);
     } else if (e.orb.lastHitBy === 0) {
       this.stats.knockouts += this.scores[victim] === 0 ? 1 : 0;
     }
@@ -504,6 +573,17 @@ export class Game {
       });
       this.audio.stinger(winner === 0);
       this.audio.setIntensity(0);
+
+      // The victory beat runs in the two seconds the result screen was already
+      // waiting out, so the celebration costs the player nothing.
+      if (winner >= 0) {
+        const wc = this.crafts[winner];
+        wc.celebrate();
+        this.camera.startVictory(wc);
+        this.effects.victory(wc, winner === 0);
+        this.victoryCraft = wc;
+        this._nextVolley = 0.55;
+      }
       return;
     }
 
@@ -660,10 +740,29 @@ export class Game {
 
   _updateOver(dtReal) {
     this.overTimer += dtReal;
+
+    // Volleys on a beat rather than one continuous emitter: a steady stream
+    // reads as a machine venting, and repeated volleys read as a celebration.
+    if (this.victoryCraft) {
+      this._nextVolley -= dtReal;
+      if (this._nextVolley <= 0) {
+        this._nextVolley = 0.62;
+        this.effects.confetti(this.victoryCraft, 0.75);
+      }
+    }
+
     if (!this._resultShown && this.overTimer > 2.2) {
       this._resultShown = true;
       this.onMatchEnd?.(this.buildResult());
     }
+  }
+
+  /**
+   * One more volley, on demand. The result screen calls this on the beats of
+   * its score tally so the arena answers the HUD.
+   */
+  celebrateBurst(power = 0.8) {
+    if (this.victoryCraft) this.effects.confetti(this.victoryCraft, power);
   }
 
   buildResult() {

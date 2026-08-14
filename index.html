@@ -21,6 +21,8 @@
   <div class="hud-top">
     <div class="rivals" id="rivals"></div>
     <div class="wave-readout">
+      <div class="score-label">SCORE</div>
+      <div class="score-value" id="scoreValue">0</div>
       <div class="wave-label">ORBS</div>
       <div class="wave-value" id="orbCount">1</div>
       <div class="pin-meter" id="pinMeter">
@@ -69,7 +71,11 @@
 
   <div class="countdown" id="countdown"><span></span></div>
   <div class="toasts" id="toasts"></div>
-  <div class="combo" id="combo"><b>0</b><i>DEFLECT CHAIN</i></div>
+  <div class="pops" id="pops"></div>
+  <div class="combo" id="combo">
+    <b id="comboMult">&times;2</b>
+    <i><span id="comboNum">0</span> CHAIN</i>
+  </div>
 </div>
 
 <!-- ============================ BOOT ============================= -->
